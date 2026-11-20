@@ -1,9 +1,8 @@
 <div align="center">
-<img width="125" height="125" src="https://gitee.com/lyc486/legado/raw/main/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" alt="legado"/>
-<br>
-阅读Sigma
-<br>
-阅读Sigma继承自<a href="https://github.com/gedoor/legado" target="_blank">Legado</a>，延续开源阅读项目，在其基础上新增更多功能。
+<img width="125" height="125" src="docs/logo.svg" alt="Sigma-Spe"/>
+<h1>Sigma-Spe</h1>
+<p>阅读Sigma</p>
+<p>Sigma-Spe（阅读Sigma）继承自<a href="https://github.com/gedoor/legado" target="_blank">Legado</a>，延续开源阅读项目，在其基础上新增更多功能。</p>
 </div>
 
 ## 版本说明
