@@ -22,7 +22,7 @@ data class BookFingerprint(
     @PrimaryKey
     @ColumnInfo(defaultValue = "")
     var bookUrl: String = "",
-    // 参与计算的章节标识，章节或缓存变化后需要重新计算
+    // 算法版本及实际采样正文的摘要；同一章节地址的正文更新也会失效
     @ColumnInfo(defaultValue = "")
     var sourceKey: String = "",
     // 每个采样章节的SimHash，逗号分隔，为空表示没有足够的缓存正文

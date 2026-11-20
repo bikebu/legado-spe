@@ -15,6 +15,7 @@ import io.legado.app.lib.dialogs.alert
 import io.legado.app.lib.theme.primaryColor
 import io.legado.app.ui.widget.dialog.WaitDialog
 import io.legado.app.utils.setEdgeEffectColor
+import io.legado.app.utils.showDialogFragment
 import io.legado.app.utils.viewbindingdelegate.viewBinding
 
 /**
@@ -42,16 +43,9 @@ class BookDuplicateActivity :
     }
 
     override fun observeLiveBus() {
-        viewModel.progressLiveData.observe(this) { text ->
-            if (text == null) {
-                waitDialog.dismiss()
-            } else {
-                waitDialog.setText(text)
-                if (!waitDialog.isShowing) {
-                    waitDialog.show()
-                }
-            }
-        }
+        viewModel.progressLiveData.observe(this) { updateWaitDialog() }
+        viewModel.operationLiveData.observe(this) { updateWaitDialog() }
+        viewModel.mergingLiveData.observe(this) { adapter.merging = it }
         viewModel.groupsLiveData.observe(this) { groups ->
             adapter.setItems(groups)
             upEmptyView()
@@ -65,7 +59,9 @@ class BookDuplicateActivity :
 
     override fun onCompatOptionsItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
+            R.id.menu_merge_history -> showDialogFragment<BookMergeHistoryDialog>()
             R.id.menu_rescan -> viewModel.scan()
+            R.id.menu_rebuild_fingerprints -> viewModel.scan(forceRefresh = true)
             R.id.menu_clear_ignore -> viewModel.clearIgnored()
         }
         return super.onCompatOptionsItemSelected(item)
@@ -78,26 +74,58 @@ class BookDuplicateActivity :
 
     override fun ignore(group: DuplicateGroup) {
         viewModel.ignore(group)
-        removeGroup(group)
     }
 
     override fun merge(group: DuplicateGroup, keep: Book) {
-        alert(
-            getString(R.string.book_duplicate_merge),
-            getString(R.string.book_duplicate_merge_confirm, keep.name, group.books.size - 1)
-        ) {
-            okButton {
-                viewModel.merge(group, keep) {
-                    removeGroup(group)
+        if (viewModel.mergingLiveData.value == true) return
+        val candidates = group.books.filter { it.bookUrl != keep.bookUrl }
+        val checked = BooleanArray(candidates.size)
+        val labels = candidates.map { book ->
+            val reasons = group.matches[setOf(keep.bookUrl, book.bookUrl)].orEmpty()
+            val evidence = if (reasons.isEmpty()) {
+                getString(R.string.book_duplicate_indirect)
+            } else {
+                reasons.sortedBy { it.ordinal }.joinToString(" · ") {
+                    getString(adapter.reasonRes(it))
                 }
+            }
+            val count = group.contentMatches[setOf(keep.bookUrl, book.bookUrl)] ?: 0
+            val contentEvidence = if (count > 0) {
+                "\n" + getString(R.string.book_duplicate_content_matches, count)
+            } else ""
+            "${book.name} · ${book.author} (${book.originName})\n$evidence$contentEvidence"
+        }.toTypedArray()
+        alert(getString(R.string.book_duplicate_select, keep.name)) {
+            multiChoiceItems(labels, checked) { _, index, selected -> checked[index] = selected }
+            okButton {
+                val removes = candidates.filterIndexed { index, _ -> checked[index] }
+                if (removes.isNotEmpty()) confirmMerge(group, keep, removes)
             }
             cancelButton()
         }
     }
 
-    private fun removeGroup(group: DuplicateGroup) {
-        adapter.removeItem(group)
-        upEmptyView()
+    private fun confirmMerge(group: DuplicateGroup, keep: Book, removes: List<Book>) {
+        alert(
+            getString(R.string.book_duplicate_merge),
+            getString(R.string.book_duplicate_merge_confirm, keep.name, removes.size) +
+                "\n\n" + removes.joinToString("\n") { "${it.name} · ${it.author} (${it.originName})" }
+        ) {
+            okButton { viewModel.merge(group, keep, removes) }
+            cancelButton()
+        }
+    }
+
+    private fun updateWaitDialog() {
+        val operation = viewModel.operationLiveData.value
+        val text = operation ?: viewModel.progressLiveData.value
+        if (text == null) {
+            waitDialog.dismiss()
+        } else {
+            waitDialog.setCancelable(operation == null)
+            waitDialog.setText(text)
+            if (!waitDialog.isShowing) waitDialog.show()
+        }
     }
 
     private fun upEmptyView() {

@@ -12,6 +12,9 @@ interface BookFingerprintDao {
     @Query("select * from book_fingerprints where bookUrl = :bookUrl")
     fun get(bookUrl: String): BookFingerprint?
 
+    @Query("select * from book_fingerprints where bookUrl in (:bookUrls)")
+    fun getByBookUrls(bookUrls: List<String>): List<BookFingerprint>
+
     @get:Query("select * from book_fingerprints")
     val all: List<BookFingerprint>
 
