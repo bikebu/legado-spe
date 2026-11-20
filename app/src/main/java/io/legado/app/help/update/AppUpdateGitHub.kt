@@ -16,6 +16,9 @@ import kotlinx.coroutines.CoroutineScope
 @Suppress("unused")
 object AppUpdateGitHub : AppUpdate.AppUpdateInterface {
 
+    // 本仓库的GitHub Releases
+    private const val REPO = "bikebu/legado-spe"
+
     private val checkVariant: AppVariant
         get() = when (AppConfig.updateToVariant) {
             "official_version" -> AppVariant.OFFICIAL
@@ -27,9 +30,9 @@ object AppUpdateGitHub : AppUpdate.AppUpdateInterface {
 
     private suspend fun getLatestRelease(): List<AppReleaseInfo> {
         val lastReleaseUrl = if (checkVariant.isBeta()) {
-            "https://api.github.com/repos/luoyacheng/legado-E/releases/tags/beta"
+            "https://api.github.com/repos/$REPO/releases/tags/beta"
         } else {
-            "https://api.github.com/repos/luoyacheng/legado-E/releases/latest"
+            "https://api.github.com/repos/$REPO/releases/latest"
         }
         val res = okHttpClient.newCallResponse {
             url(lastReleaseUrl)

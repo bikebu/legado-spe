@@ -88,7 +88,7 @@
 
 ## **必读**
 来源于fork仓库 [Luoyacheng/legado-E](https://github.com/Luoyacheng/legado-E)　  
-[查看实时详细日志](https://gitee.com/lyc486/legado/commits/main)　 
+[查看实时详细日志](https://github.com/bikebu/legado-spe/commits/main)　 
 
 【温馨提醒】 *更新前一定要做好备份，以免数据丢失！*  
 * 阅读只是一个转码工具，不提供内容，第一次安装app，需要自己手动导入书源。
