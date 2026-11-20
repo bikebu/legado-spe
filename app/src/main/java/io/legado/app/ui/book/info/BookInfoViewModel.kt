@@ -509,11 +509,13 @@ class BookInfoViewModel(application: Application) : BaseViewModel(application) {
             book.group = book.group or selectedGroup
             book.removeType(BookType.notShelf)
             book.removeType(BookType.updateError)
-            appDb.bookDao.insert(book)
-            if (toc.isNotEmpty()) {
-                appDb.bookChapterDao.insert(*toc.toTypedArray())
+            // 新书写入和合并在同一个事务里，合并失败时不会留下两本书
+            BookDuplicateHelp.merge(book, listOf(shelfBook)) {
+                appDb.bookDao.insert(book)
+                if (toc.isNotEmpty()) {
+                    appDb.bookChapterDao.insert(*toc.toTypedArray())
+                }
             }
-            BookDuplicateHelp.merge(book, listOf(shelfBook))
             inBookshelf = true
             SourceCallBack.callBackBook(SourceCallBack.ADD_BOOK_SHELF, bookSource, book)
             bookData.postValue(book)

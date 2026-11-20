@@ -10,6 +10,7 @@ import io.legado.app.data.entities.Bookmark
 import io.legado.app.data.entities.Cache
 import io.legado.app.data.entities.ReadRecord
 import io.legado.app.model.ReadBook
+import io.legado.app.model.localBook.LocalBook
 import com.google.gson.GsonBuilder
 import com.google.gson.Strictness
 import splitties.init.appCtx
@@ -35,7 +36,9 @@ object BookMergeHistory {
         val keepName: String,
         val removedCount: Int,
         val bookUrls: List<String>,
-        val bookNames: List<String>
+        val bookNames: List<String>,
+        // 每本书的"书名 · 作者 · 来源"，第一本为保留的书；只用于展示，旧记录为null
+        val bookLabels: List<String>? = null
     )
 
     @Keep
@@ -69,7 +72,8 @@ object BookMergeHistory {
         val record = Record(
             UUID.randomUUID().toString(), System.currentTimeMillis(), previous + 1,
             books.first().name, books.size - 1,
-            books.map { it.bookUrl }, books.map { it.name }.distinct()
+            books.map { it.bookUrl }, books.map { it.name }.distinct(),
+            books.map { label(it) }
         )
         val snapshot = Snapshot(
             VERSION, record,
@@ -125,11 +129,7 @@ object BookMergeHistory {
         }) { "请先撤销涉及相同书籍或书名的较新合并记录" }
         // Read without AtomicFile.openRead(): a failed restore must not rename/delete any payload.
         val snapshot = try {
-            val base = payload(record.id)
-            val backup = File(base.path + ".bak")
-            GZIPInputStream((if (backup.exists()) backup else base).inputStream()).use { input ->
-                input.reader(Charsets.UTF_8).use { snapshotJson.fromJson(it, Snapshot::class.java) }
-            }.also { validate(it, record) }
+            readSnapshot(record)
         } catch (error: Exception) {
             throw IllegalStateException("合并备份丢失或损坏，无法撤销；原记录已保留", error)
         }
@@ -187,10 +187,14 @@ object BookMergeHistory {
     fun prune() {
         check(!appDb.inTransaction()) { "合并历史清理不能在数据库事务中执行" }
         val now = System.currentTimeMillis()
-        val all = loadRecords()
+        val (all, corrupt) = loadMarkers()
         val expired = all.filter { BookMergeHistoryPolicy.isExpired(it.createdAt, now) }
+        expired.forEach { record ->
+            cleanup { releaseRemovedBooks(record) }
+        }
         appDb.runInTransaction {
             expired.forEach { appDb.cacheDao.delete(PREFIX + it.id) }
+            corrupt.forEach { appDb.cacheDao.delete(it) }
         }
         val activeIds = (all - expired.toSet()).mapTo(hashSetOf()) { it.id }
         cleanup {
@@ -208,18 +212,62 @@ object BookMergeHistory {
         }
     }
 
-    private fun loadRecords(): List<Record> = appDb.cacheDao.getByPrefix(PREFIX).map { marker ->
-        try {
-            snapshotJson.fromJson(marker.value, Record::class.java).also {
-                require(marker.key == PREFIX + it.id)
-                require(UUID.fromString(it.id).toString() == it.id)
-                require(it.sequence > 0 && it.removedCount >= 1)
-                require(it.bookUrls.size == it.removedCount + 1)
-                require(it.bookUrls.distinct().size == it.bookUrls.size)
-                require(it.bookNames.isNotEmpty() && it.keepName in it.bookNames)
+    private fun loadRecords(): List<Record> = loadMarkers().first
+
+    /**
+     * 返回(有效记录, 损坏的标记key)。损坏的记录无法撤回，只记录日志，
+     * 不能因为一条坏记录阻断后续所有合并和合并记录页面。
+     */
+    private fun loadMarkers(): Pair<List<Record>, List<String>> {
+        val records = arrayListOf<Record>()
+        val corrupt = arrayListOf<String>()
+        appDb.cacheDao.getByPrefix(PREFIX).forEach { marker ->
+            try {
+                records.add(snapshotJson.fromJson(marker.value, Record::class.java).also {
+                    require(marker.key == PREFIX + it.id)
+                    require(UUID.fromString(it.id).toString() == it.id)
+                    require(it.sequence > 0 && it.removedCount >= 1)
+                    require(it.bookUrls.size == it.removedCount + 1)
+                    require(it.bookUrls.distinct().size == it.bookUrls.size)
+                    require(it.bookNames.isNotEmpty() && it.keepName in it.bookNames)
+                    require(it.bookLabels == null || it.bookLabels.size == it.bookUrls.size)
+                })
+            } catch (error: Exception) {
+                corrupt.add(marker.key)
+                runCatching { AppLog.put("合并记录损坏，已忽略：${marker.key}", error) }
             }
-        } catch (error: Exception) {
-            throw IllegalStateException("合并历史记录损坏，已保留备份", error)
+        }
+        return records to corrupt
+    }
+
+    private fun label(book: Book): String {
+        val origin = if (book.isLocal) "本地" else book.originName
+        return listOf(book.name, book.author, origin).filter { it.isNotBlank() }.joinToString(" · ")
+    }
+
+    private fun readSnapshot(record: Record): Snapshot {
+        val base = payload(record.id)
+        val backup = File(base.path + ".bak")
+        return GZIPInputStream((if (backup.exists()) backup else base).inputStream()).use { input ->
+            input.reader(Charsets.UTF_8).use { snapshotJson.fromJson(it, Snapshot::class.java) }
+        }.also { validate(it, record) }
+    }
+
+    /**
+     * 记录过期后已不能撤回，释放被合并书籍为撤回保留的正文缓存和本地封面。
+     * 书籍又被加回书架（同一URL）时跳过。
+     */
+    private fun releaseRemovedBooks(record: Record) {
+        val snapshot = readSnapshot(record)
+        snapshot.books.drop(1).forEach { saved ->
+            val book = saved.book
+            if (appDb.bookDao.has(book.bookUrl)) return@forEach
+            if (book.isLocal) {
+                // 只清理缓存和封面，不删除本地源文件
+                LocalBook.deleteBook(book, false)
+            } else {
+                BookHelp.clearCache(book)
+            }
         }
     }
 

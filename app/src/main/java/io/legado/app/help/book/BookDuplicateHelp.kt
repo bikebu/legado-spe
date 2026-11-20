@@ -231,10 +231,21 @@ object BookDuplicateHelp {
      * 合并重复书籍，保留keep，删除removes
      * 合并分组、阅读进度、书签、阅读时长、自定义信息
      */
-    fun merge(keep: Book, removes: List<Book>) = synchronized(BookMergeHistory) {
+    /**
+     * @param prepare 在合并事务内最先执行，用于把保留的书写入数据库（如换源时的新书），
+     * 合并失败时随事务一起回滚，不会留下半完成的状态
+     */
+    fun merge(
+        keep: Book,
+        removes: List<Book>,
+        prepare: (() -> Unit)? = null
+    ) = synchronized(BookMergeHistory) {
         BookMergeHistory.prune()
+        // 正文比较要读文件、执行替换规则，放在事务外预先算好，事务内只查表
+        val sameContent = precomputeSameContent(keep, removes)
         val removeList = arrayListOf<Book>()
         appDb.runInTransaction {
+            prepare?.invoke()
             val newKeep = checkNotNull(appDb.bookDao.getBook(keep.bookUrl)) {
                 "保留的书籍已不在书架，请重新扫描"
             }
@@ -263,8 +274,8 @@ object BookDuplicateHelp {
                 if (newKeep.customTag.isNullOrEmpty()) {
                     newKeep.customTag = old.customTag
                 }
-                mergeProgress(newKeep, old, keepToc)
-                mergeBookmarks(newKeep, old, keepToc, removeUrls)
+                mergeProgress(newKeep, old, keepToc, sameContent)
+                mergeBookmarks(newKeep, old, keepToc, removeUrls, sameContent)
                 mergeReadRecord(newKeep, old, removeUrls)
             }
             appDb.bookDao.update(newKeep)
@@ -309,17 +320,56 @@ object BookDuplicateHelp {
         .thenByDescending { it.totalChapterNum }
         .thenByDescending { it.durChapterTime }
 
-    private fun mergeProgress(keep: Book, old: Book, keepToc: List<BookChapter>) {
+    /**
+     * 事务外预先比较"被合并书的章节"和"保留书对应章节"处理后的正文是否一致。
+     * key为(被合并书URL, 被合并书章节序号, 保留书章节序号)，查不到按不一致处理（从章节开头继续）。
+     */
+    private class SameContentTable(private val table: Map<Triple<String, Int, Int>, Boolean>) {
+        fun get(oldUrl: String, oldIndex: Int, keepIndex: Int): Boolean =
+            table[Triple(oldUrl, oldIndex, keepIndex)] ?: false
+    }
+
+    private fun precomputeSameContent(keep: Book, removes: List<Book>): SameContentTable {
+        val table = hashMapOf<Triple<String, Int, Int>, Boolean>()
+        runCatching {
+            val keepBook = appDb.bookDao.getBook(keep.bookUrl) ?: return@runCatching
+            val keepToc = appDb.bookChapterDao.getChapterList(keepBook.bookUrl)
+            if (keepToc.isEmpty()) return@runCatching
+            removes.distinctBy { it.bookUrl }.filter { it.bookUrl != keep.bookUrl }.forEach { removed ->
+                val old = appDb.bookDao.getBook(removed.bookUrl) ?: return@forEach
+                val oldToc = appDb.bookChapterDao.getChapterList(old.bookUrl)
+                if (oldToc.isEmpty()) return@forEach
+                val pairs = linkedSetOf<Pair<Int, Int>>()
+                pairs.add(old.durChapterIndex to BookHelp.getDurChapter(old, keepToc))
+                appDb.bookmarkDao.getByBook(old.name, old.author).forEach { bookmark ->
+                    pairs.add(
+                        bookmark.chapterIndex to BookHelp.getDurChapter(
+                            bookmark.chapterIndex, bookmark.chapterName, keepToc, old.totalChapterNum
+                        )
+                    )
+                }
+                pairs.forEach { (oldIndex, keepIndex) ->
+                    val oldChapter = oldToc.getOrNull(oldIndex) ?: return@forEach
+                    val keepChapter = keepToc.getOrNull(keepIndex) ?: return@forEach
+                    table[Triple(old.bookUrl, oldIndex, keepIndex)] =
+                        hasSameReadingContent(old, oldChapter, keepBook, keepChapter)
+                }
+            }
+        }.onFailure {
+            AppLog.put("合并前比较正文失败，阅读位置将从章节开头继续", it)
+        }
+        return SameContentTable(table)
+    }
+
+    private fun mergeProgress(
+        keep: Book, old: Book, keepToc: List<BookChapter>, sameContentTable: SameContentTable
+    ) {
         keep.durChapterTime = max(keep.durChapterTime, old.durChapterTime)
         if (keepToc.isEmpty()) return
         val index = BookHelp.getDurChapter(old, keepToc)
         if (index < keep.durChapterIndex) return
         // 不同来源的字符偏移不可直接比较，只有处理后的正文和标题一致才迁移位置。
-        val oldChapter = appDb.bookChapterDao.getChapterList(old.bookUrl)
-            .getOrNull(old.durChapterIndex)
-        val sameContent = oldChapter?.let { chapter ->
-            hasSameReadingContent(old, chapter, keep, keepToc[index])
-        } ?: false
+        val sameContent = sameContentTable.get(old.bookUrl, old.durChapterIndex, index)
         val position = mergedChapterPosition(
             keep.durChapterIndex, keep.durChapterPos, index, old.durChapterPos, sameContent
         ) ?: return
@@ -358,7 +408,11 @@ object BookDuplicateHelp {
     }
 
     private fun mergeBookmarks(
-        keep: Book, old: Book, keepToc: List<BookChapter>, removeUrls: Set<String>
+        keep: Book,
+        old: Book,
+        keepToc: List<BookChapter>,
+        removeUrls: Set<String>,
+        sameContentTable: SameContentTable
     ) {
         if (keep.name == old.name && keep.author == old.author) return
         val shared = appDb.bookDao.findByName(old.name).any {
@@ -368,7 +422,6 @@ object BookDuplicateHelp {
         var nextTime = if (shared) {
             max(System.currentTimeMillis(), appDb.bookmarkDao.all.maxOfOrNull { it.time } ?: 0L)
         } else 0L
-        val oldToc = appDb.bookChapterDao.getChapterList(old.bookUrl)
         appDb.bookmarkDao.getByBook(old.name, old.author).forEach { bookmark ->
             val index = if (keepToc.isEmpty()) {
                 bookmark.chapterIndex
@@ -381,9 +434,8 @@ object BookDuplicateHelp {
                 )
             }
             val targetChapter = keepToc.getOrNull(index)
-            val sourceChapter = oldToc.getOrNull(bookmark.chapterIndex)
-            val sameContent = targetChapter != null && sourceChapter != null &&
-                hasSameReadingContent(old, sourceChapter, keep, targetChapter)
+            val sameContent = targetChapter != null &&
+                sameContentTable.get(old.bookUrl, bookmark.chapterIndex, index)
             val migrated = bookmark.copy(
                 time = if (shared) ++nextTime else bookmark.time,
                 bookName = keep.name,

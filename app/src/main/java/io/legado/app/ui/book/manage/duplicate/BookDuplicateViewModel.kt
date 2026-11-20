@@ -22,7 +22,12 @@ class BookDuplicateViewModel(application: Application) : BaseViewModel(applicati
     val progressLiveData = MutableLiveData<String?>()
     val mergingLiveData = MutableLiveData(false)
     val operationLiveData = MutableLiveData<String?>()
-    val historyLiveData = MutableLiveData<List<BookMergeHistory.Record>?>()
+    /**
+     * 合并记录页面状态：records和error都为null表示正在读取
+     */
+    class HistoryState(val records: List<BookMergeHistory.Record>?, val error: String? = null)
+
+    val historyLiveData = MutableLiveData<HistoryState>()
     private var scanVersion = 0
     private var scanCoroutine: Coroutine<List<DuplicateGroup>>? = null
 
@@ -91,23 +96,16 @@ class BookDuplicateViewModel(application: Application) : BaseViewModel(applicati
     }
 
     fun loadHistory() {
-        if (mergingLiveData.value == true) return
-        mergingLiveData.value = true
-        operationLiveData.value = context.getString(R.string.book_duplicate_loading_history)
+        historyLiveData.value = HistoryState(null)
+        // BookMergeHistory 自身加锁，读取记录不需要阻塞合并等其他操作
         execute {
             BookMergeHistory.records()
         }.onSuccess {
-            historyLiveData.value = it
+            historyLiveData.value = HistoryState(it)
         }.onError {
-            context.toastOnUi(it.localizedMessage)
-        }.onFinally {
-            mergingLiveData.value = false
-            operationLiveData.value = null
+            AppLog.put("读取合并记录失败\n${it.localizedMessage}", it)
+            historyLiveData.value = HistoryState(null, it.localizedMessage ?: it.toString())
         }
-    }
-
-    fun consumeHistory() {
-        historyLiveData.value = null
     }
 
     fun undoMerge(record: BookMergeHistory.Record) {
