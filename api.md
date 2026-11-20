@@ -291,3 +291,37 @@ Method = query
 URL = content://providerHost/book/cover/query?path=xxxx
 Method = query
 ```
+
+### MCP
+
+AI 客户端（Claude Code、Cursor 等）可以通过 [MCP](/app/src/main/java/io/legado/app/web/mcp/) 编写和调试书源。
+
+#### 开启
+1. 在"我的"页面开启 Web 服务
+2. 设置 → 其它设置 → MCP 服务 → 开启，对话框中会显示地址、访问令牌和配置命令
+3. 令牌只保存在本机，不参与备份；泄露后可在同一对话框中重置
+
+#### 连接
+传输方式为 Streamable HTTP（只返回 JSON，不使用 SSE），请求需带上令牌：
+```
+URL = http://手机IP:Web服务端口/mcp
+Method = POST
+Header = Authorization: Bearer 令牌
+```
+Claude Code：
+```
+claude mcp add --transport http sigma-spe http://手机IP:Web服务端口/mcp --header "Authorization: Bearer 令牌"
+```
+
+#### 工具
+| 工具 | 说明 |
+|---|---|
+| get_rule_help | 书源规则文档：rule、js、regex、xpath、debug |
+| list_book_sources | 列出已有书源，可按关键字筛选 |
+| get_book_source | 获取书源完整 JSON |
+| save_book_source | 保存书源，bookSourceUrl 相同则覆盖 |
+| fetch_url | 用书源的请求头、Cookie 请求网页并返回源码，支持书源 URL 写法和分段读取 |
+| test_rule | 用 App 的规则引擎测试单条规则（string / list / elements） |
+| debug_book_source | 完整调试书源并返回日志，key 写法同书源调试 |
+
+调试器全局只有一个，MCP 的调试会排队执行，App 内正在进行的书源调试会被打断。

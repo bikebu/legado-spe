@@ -12,6 +12,7 @@ import io.legado.app.service.WebService
 import io.legado.app.utils.GSON
 import io.legado.app.utils.LogUtils
 import io.legado.app.utils.stackTraceStr
+import io.legado.app.web.mcp.McpServer
 import io.legado.app.web.utils.AssetsWeb
 import kotlinx.coroutines.runBlocking
 import okio.Pipe
@@ -32,6 +33,10 @@ class HttpServer(port: Int) : NanoHTTPD(port) {
         val startAt = System.currentTimeMillis()
         LogUtils.d(TAG) {
             "${session.method.name} - $uri - ${session.queryParameterString} - Start($startAt)"
+        }
+
+        if (uri == McpServer.PATH && session.method != Method.OPTIONS) {
+            return McpServer.serve(session)
         }
 
         try {

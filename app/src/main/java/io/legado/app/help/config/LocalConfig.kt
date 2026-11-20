@@ -128,4 +128,23 @@ by appCtx.getSharedPreferences("local", Context.MODE_PRIVATE) {
             putBoolean("appCrash", value)
         }
 
+    /**
+     * MCP服务开关和访问令牌，只保存在本机，不参与备份
+     */
+    var mcpEnabled: Boolean
+        get() = getBoolean("mcpEnabled")
+        set(value) {
+            putBoolean("mcpEnabled", value)
+        }
+
+    var mcpToken: String?
+        get() = getString("mcpToken", null)
+        set(value) {
+            if (value != null) {
+                putString("mcpToken", value)
+            } else {
+                remove("mcpToken")
+            }
+        }
+
 }

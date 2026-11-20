@@ -1393,4 +1393,15 @@
     <string name="book_duplicate_history_expire_hours">剩 %1$d 小时</string>
     <string name="book_duplicate_history_expire_soon">即将过期</string>
     <string name="book_duplicate_undo_short">撤回</string>
+    <string name="mcp_service">MCP 服务</string>
+    <string name="mcp_service_summary_on">已开启，AI 可以编写和调试书源</string>
+    <string name="mcp_service_summary_off">让 AI 通过 MCP 编写和调试书源</string>
+    <string name="mcp_service_off_msg">开启后，AI 客户端（如 Claude Code、Cursor）可以通过 MCP 读取、保存书源，抓取网页、测试规则和调试书源。\n\n需要同时开启 Web 服务，连接时需要访问令牌。请只在可信的局域网中使用。</string>
+    <string name="mcp_service_on_msg">地址：%1$s\n令牌：%2$s\n\nClaude Code 配置命令：\n%3$s</string>
+    <string name="mcp_web_service_not_running">Web 服务未开启，请先在「我的」页面开启 Web 服务，地址中的手机IP以 Web 服务显示的为准。</string>
+    <string name="mcp_enable">开启</string>
+    <string name="mcp_disable">关闭服务</string>
+    <string name="mcp_copy_command">复制配置命令</string>
+    <string name="mcp_reset_token">重置令牌</string>
+    <string name="mcp_token_reset">令牌已重置，请更新 AI 客户端的配置</string>
 </resources>
