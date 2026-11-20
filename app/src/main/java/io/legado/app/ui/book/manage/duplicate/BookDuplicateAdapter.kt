@@ -102,6 +102,8 @@ class BookDuplicateAdapter(context: Context, private val callBack: CallBack) :
             Reason.SAME_NAME -> R.string.book_duplicate_reason_same_name
             Reason.SIMILAR_NAME -> R.string.book_duplicate_reason_similar_name
             Reason.SIMILAR_CONTENT -> R.string.book_duplicate_reason_similar_content
+            Reason.POSSIBLE_CONTENT -> R.string.book_duplicate_reason_possible_content
+            Reason.SERIES_CONFLICT -> R.string.book_duplicate_reason_series_conflict
         }
     }
 

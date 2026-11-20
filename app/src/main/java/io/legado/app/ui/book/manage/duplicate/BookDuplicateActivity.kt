@@ -67,6 +67,7 @@ class BookDuplicateActivity :
     override fun onCompatOptionsItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
             R.id.menu_rescan -> viewModel.scan()
+            R.id.menu_rebuild_fingerprints -> viewModel.scan(forceRefresh = true)
             R.id.menu_clear_ignore -> viewModel.clearIgnored()
         }
         return super.onCompatOptionsItemSelected(item)
@@ -94,7 +95,11 @@ class BookDuplicateActivity :
                     getString(adapter.reasonRes(it))
                 }
             }
-            "${book.name} · ${book.author} (${book.originName})\n$evidence"
+            val count = group.contentMatches[setOf(keep.bookUrl, book.bookUrl)] ?: 0
+            val contentEvidence = if (count > 0) {
+                "\n" + getString(R.string.book_duplicate_content_matches, count)
+            } else ""
+            "${book.name} · ${book.author} (${book.originName})\n$evidence$contentEvidence"
         }.toTypedArray()
         alert(getString(R.string.book_duplicate_select, keep.name)) {
             multiChoiceItems(labels, checked) { _, index, selected -> checked[index] = selected }

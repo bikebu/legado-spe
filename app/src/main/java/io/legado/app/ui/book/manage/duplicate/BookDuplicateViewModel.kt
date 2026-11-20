@@ -22,13 +22,13 @@ class BookDuplicateViewModel(application: Application) : BaseViewModel(applicati
     private var scanVersion = 0
     private var scanCoroutine: Coroutine<List<DuplicateGroup>>? = null
 
-    fun scan() {
+    fun scan(forceRefresh: Boolean = false) {
         if (mergingLiveData.value == true) return
         val version = ++scanVersion
         scanCoroutine?.cancel()
         progressLiveData.value = context.getString(R.string.book_duplicate_scanning, 0, 0)
         scanCoroutine = execute {
-            BookDuplicateHelp.findDuplicates(appDb.bookDao.all) { current, total ->
+            BookDuplicateHelp.findDuplicates(appDb.bookDao.all, forceRefresh) { current, total ->
                 viewModelScope.launch(Dispatchers.Main) {
                     if (version == scanVersion) {
                         progressLiveData.value = context.getString(

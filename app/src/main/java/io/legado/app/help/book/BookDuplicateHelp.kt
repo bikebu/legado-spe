@@ -12,6 +12,7 @@ import io.legado.app.model.SourceCallBack
 import io.legado.app.model.localBook.LocalBook
 import io.legado.app.utils.ChineseUtils
 import io.legado.app.utils.MD5Utils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
 import kotlin.math.max
@@ -32,17 +33,23 @@ object BookDuplicateHelp {
         // 作者相同，书名相近
         SIMILAR_NAME,
         // 正文相似
-        SIMILAR_CONTENT
+        SIMILAR_CONTENT,
+        // 仅一个独立章节命中，低置信疑似
+        POSSIBLE_CONTENT,
+        // 正文命中但系列标记不同，必须人工核对
+        SERIES_CONFLICT
     }
 
     class DuplicateGroup(
         val books: List<Book>,
         val reasons: Set<Reason>,
-        val matches: Map<Set<String>, Set<Reason>> = emptyMap()
+        val matches: Map<Set<String>, Set<Reason>> = emptyMap(),
+        val contentMatches: Map<Set<String>, Int> = emptyMap()
     ) {
         val key: String = groupKey(books)
     }
 
+    private const val FINGERPRINT_VERSION = 2
     private const val IGNORE_KEY = "bookDuplicateIgnore"
 
     // 每本书最多取几个章节计算指纹
@@ -94,6 +101,7 @@ object BookDuplicateHelp {
      */
     suspend fun findDuplicates(
         books: List<Book>,
+        forceRefresh: Boolean = false,
         progress: ((Int, Int) -> Unit)? = null
     ): List<DuplicateGroup> {
         val shelfBooks = books.filterNot { it.isNotShelf }
@@ -101,6 +109,7 @@ object BookDuplicateHelp {
         if (size < 2) return emptyList()
         val keys = shelfBooks.map { BookKey(it) }
         val unionFind = UnionFind(size)
+        val contentMatches = hashMapOf<Set<String>, Int>()
         val pairReasons = hashMapOf<Long, MutableSet<Reason>>()
         fun link(i: Int, j: Int, reason: Reason) {
             unionFind.union(i, j)
@@ -135,15 +144,25 @@ object BookDuplicateHelp {
         val hashes = shelfBooks.mapIndexed { index, book ->
             coroutineContext.ensureActive()
             progress?.invoke(index + 1, size)
-            kotlin.runCatching { getFingerprint(book)?.hashList() }.getOrNull().orEmpty()
+            try {
+                getFingerprint(book, forceRefresh)?.hashList().orEmpty()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLog.put("读取书籍指纹失败：${book.name}", e)
+                emptyList()
+            }
         }
         for (i in 0 until size) {
             if (hashes[i].isEmpty()) continue
             coroutineContext.ensureActive()
             for (j in i + 1 until size) {
                 if (hashes[j].isEmpty() || keys[i].media != keys[j].media) continue
-                if (isSimilarContent(hashes[i], hashes[j])) {
-                    link(i, j, Reason.SIMILAR_CONTENT)
+                val count = contentMatchCount(hashes[i], hashes[j])
+                if (count > 0) {
+                    contentMatches[setOf(shelfBooks[i].bookUrl, shelfBooks[j].bookUrl)] = count
+                    link(i, j, if (count >= 2) Reason.SIMILAR_CONTENT else Reason.POSSIBLE_CONTENT)
+                    if (keys[i].series != keys[j].series) link(i, j, Reason.SERIES_CONFLICT)
                 }
             }
         }
@@ -162,7 +181,9 @@ object BookDuplicateHelp {
                     .mapKeys { (pair, _) ->
                         setOf(shelfBooks[(pair ushr 32).toInt()].bookUrl, shelfBooks[pair.toInt()].bookUrl)
                     }
-                DuplicateGroup(groupBooks, reasons, matches).takeIf { it.key !in ignored }
+                DuplicateGroup(
+                    groupBooks, reasons, matches, contentMatches.filterKeys { it in matches }
+                ).takeIf { it.key !in ignored }
             }
         return groups.sortedBy { group -> group.reasons.minOf { it.ordinal } }
     }
@@ -378,7 +399,7 @@ object BookDuplicateHelp {
      * 获取正文指纹，只使用已缓存的正文（本地TXT视为已缓存）
      * 采样章节没有变化时直接使用数据库中的指纹
      */
-    fun getFingerprint(book: Book): BookFingerprint? {
+    suspend fun getFingerprint(book: Book, forceRefresh: Boolean = false): BookFingerprint? {
         if (book.isAudio || book.isVideo || book.isImage || book.isPdf) return null
         val chapters = appDb.bookChapterDao.getChapterList(book.bookUrl, 0, MAX_SCAN_CHAPTERS - 1)
         val candidates = chapters.filter {
@@ -386,37 +407,82 @@ object BookDuplicateHelp {
                 && !boilerplateTitleRegex.containsMatchIn(it.title)
                 && BookHelp.hasContent(book, it)
         }
-        val sourceKey = MD5Utils.md5Encode16(candidates.joinToString("\n") { it.url })
-        val old = appDb.bookFingerprintDao.get(book.bookUrl)
-        if (old != null && old.sourceKey == sourceKey) return old
-        val hashes = arrayListOf<Long>()
+        // 每次读取有限的采样正文以校验内容变化，只复用昂贵的 SimHash 计算。
+        val samples = arrayListOf<Pair<String, String>>()
+        var readFailed = false
         for (chapter in candidates) {
-            if (hashes.size >= SAMPLE_CHAPTERS) break
-            val content = kotlin.runCatching {
+            coroutineContext.ensureActive()
+            if (samples.size >= SAMPLE_CHAPTERS) break
+            val content = try {
                 BookHelp.getContent(book, chapter)
-            }.getOrNull() ?: continue
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                readFailed = true
+                AppLog.put("读取采样章节失败：${book.name} / ${chapter.title}", e)
+                null
+            } ?: continue
             val text = normalizeText(
                 content.take(MAX_CHAPTER_CHARS * 2).replace(imgRegex, "")
             ).take(MAX_CHAPTER_CHARS)
             if (text.length < MIN_CHAPTER_CHARS) continue
-            hashes.add(simHash(text))
+            samples.add(chapter.url to text)
+        }
+        val sourceKey = fingerprintSourceKey(samples)
+        val old = appDb.bookFingerprintDao.get(book.bookUrl)
+        if (!forceRefresh && old != null && old.sourceKey == sourceKey) return old
+        val hashes = samples.map { (_, text) ->
+            coroutineContext.ensureActive()
+            simHash(text)
         }
         val fingerprint = BookFingerprint(
             bookUrl = book.bookUrl,
             sourceKey = sourceKey,
             chapterHashes = hashes.joinToString(",")
         )
-        appDb.bookFingerprintDao.insert(fingerprint)
+        // 暂时不可读的章节不应使不完整采样覆盖已缓存的结果。
+        if (!readFailed) appDb.bookFingerprintDao.insert(fingerprint)
         return fingerprint
     }
 
-    private fun isSimilarContent(a: List<Long>, b: List<Long>): Boolean {
-        for (x in a) {
-            for (y in b) {
-                if (java.lang.Long.bitCount(x xor y) <= SIMHASH_DISTANCE) return true
-            }
+    internal fun fingerprintSourceKey(
+        samples: List<Pair<String, String>>,
+        version: Int = FINGERPRINT_VERSION
+    ): String = MD5Utils.md5Encode(buildString {
+        append(version).append(':')
+        samples.forEach { (url, text) ->
+            append(url.length).append(':').append(url)
+            append(text.length).append(':').append(text)
         }
-        return false
+    })
+
+    /** 先合并同书内的近似采样，再做最大一对一匹配，避免重复正文抬高置信度。 */
+    internal fun contentMatchCount(a: List<Long>, b: List<Long>): Int {
+        fun close(x: Long, y: Long) = java.lang.Long.bitCount(x xor y) <= SIMHASH_DISTANCE
+        fun clusters(hashes: List<Long>): List<List<Long>> {
+            val groups = arrayListOf<List<Long>>()
+            hashes.distinct().forEach { hash ->
+                val touching = groups.filter { group -> group.any { close(it, hash) } }
+                groups.removeAll(touching.toSet())
+                groups.add(touching.flatten() + hash)
+            }
+            return groups
+        }
+        val left = clusters(a)
+        val right = clusters(b)
+        val matched = IntArray(right.size) { -1 }
+        fun augment(i: Int, visited: BooleanArray): Boolean {
+            for (j in right.indices) {
+                if (visited[j] || left[i].none { x -> right[j].any { y -> close(x, y) } }) continue
+                visited[j] = true
+                if (matched[j] == -1 || augment(matched[j], visited)) {
+                    matched[j] = i
+                    return true
+                }
+            }
+            return false
+        }
+        return left.indices.count { augment(it, BooleanArray(right.size)) }
     }
 
     private fun simHash(text: String): Long {

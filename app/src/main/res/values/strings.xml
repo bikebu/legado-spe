@@ -1359,7 +1359,11 @@
     <string name="book_duplicate_reason_same_name_author">书名作者相同</string>
     <string name="book_duplicate_reason_same_name">书名相同，作者不同</string>
     <string name="book_duplicate_reason_similar_name">同作者，书名相近</string>
-    <string name="book_duplicate_reason_similar_content">正文相似</string>
+    <string name="book_duplicate_reason_similar_content">多个独立章节正文相似</string>
+    <string name="book_duplicate_reason_possible_content">仅单章正文相似（低置信）</string>
+    <string name="book_duplicate_reason_series_conflict">系列标记不同，请核对是否为不同部或番外</string>
+    <string name="book_duplicate_content_matches">匹配 %1$d 对独立采样章节，仍需确认是否为同一本书</string>
+    <string name="book_duplicate_rebuild_fingerprints">重新分析正文并扫描</string>
     <string name="book_duplicate_progress">读到 %1$s · 共 %2$d 章</string>
     <string name="book_duplicate_add_title">书架上已有这本书</string>
     <string name="book_duplicate_add_msg">书架上的《%1$s》%2$s（%3$s）可能和这本是同一本书。</string>
