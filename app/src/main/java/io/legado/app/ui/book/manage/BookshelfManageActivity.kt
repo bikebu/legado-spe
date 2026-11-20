@@ -32,6 +32,7 @@ import io.legado.app.lib.theme.primaryTextColor
 import io.legado.app.ui.book.group.GroupManageDialog
 import io.legado.app.ui.book.group.GroupSelectDialog
 import io.legado.app.ui.book.info.BookInfoActivity
+import io.legado.app.ui.book.manage.duplicate.BookDuplicateActivity
 import io.legado.app.ui.file.HandleFileContract
 import io.legado.app.ui.widget.SelectActionBar
 import io.legado.app.ui.widget.dialog.WaitDialog
@@ -270,6 +271,7 @@ class BookshelfManageActivity :
     override fun onCompatOptionsItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
             R.id.menu_group_manage -> showDialogFragment<GroupManageDialog>()
+            R.id.menu_book_duplicate -> startActivity<BookDuplicateActivity>()
             R.id.menu_open_book_info_by_click_title -> {
                 AppConfig.openBookInfoByClickTitle = !item.isChecked
                 adapter.notifyItemRangeChanged(0, adapter.itemCount)

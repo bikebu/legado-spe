@@ -21,6 +21,10 @@
     </item>
 
     <item
+        android:id="@+id/menu_book_duplicate"
+        android:title="@string/book_duplicate" />
+
+    <item
         android:id="@+id/menu_export_all_use_book_source"
         android:title="@string/export_all_use_book_source" />
 
