@@ -1,16 +1,15 @@
 <div align="center">
 <img width="125" height="125" src="docs/logo.svg" alt="Sigma-Spe"/>
 <h1>Sigma-Spe</h1>
-<p>阅读Sigma</p>
-<p>Sigma-Spe（阅读Sigma）继承自<a href="https://github.com/gedoor/legado" target="_blank">Legado</a>，延续开源阅读项目，在其基础上新增更多功能。</p>
+<p>Sigma-Spe继承自<a href="https://github.com/Luoyacheng/legado-E" target="_blank">阅读Sigma</a>，阅读Sigma继承自<a href="https://github.com/gedoor/legado" target="_blank">Legado</a>，延续开源阅读项目，在其基础上新增更多功能。</p>
 </div>
 
 ## 版本说明
 - 测试版(beta)：包名与Legado原版相同，可覆盖更新，版本更新频繁
 - 正式版(plus)：新的共存包名，安装后是一个新软件，不会覆盖Legado原版，每到一个稳定阶段进行一次更新
-#### 找不到下载地址可以去这里 [下载软件](https://gitee.com/lyc486/legado/releases)
+#### 下载地址：[Releases](https://github.com/bikebu/legado-spe/releases)
 
-[![](https://img.shields.io/badge/-Contents:-696969.svg)](#contents) [![](https://img.shields.io/badge/-Function-F5F5F5.svg)](#Function-主要功能-) [![](https://img.shields.io/badge/-Community-F5F5F5.svg)](#Community-交流社区-) [![](https://img.shields.io/badge/-API-F5F5F5.svg)](#API-) [![](https://img.shields.io/badge/-Other-F5F5F5.svg)](#Other-其他-) [![](https://img.shields.io/badge/-Grateful-F5F5F5.svg)](#Grateful-感谢-) [![](https://img.shields.io/badge/-Interface-F5F5F5.svg)](#Interface-界面-)
+[![](https://img.shields.io/badge/-Contents:-696969.svg)](#contents) [![](https://img.shields.io/badge/-Function-F5F5F5.svg)](#Function-主要功能-) [![](https://img.shields.io/badge/-API-F5F5F5.svg)](#API-) [![](https://img.shields.io/badge/-Other-F5F5F5.svg)](#Other-其他-) [![](https://img.shields.io/badge/-Grateful-F5F5F5.svg)](#Grateful-感谢-) [![](https://img.shields.io/badge/-Interface-F5F5F5.svg)](#Interface-界面-)
 
 >新用户？
 >
@@ -31,32 +30,13 @@
 9.软件开源，持续优化，无广告。
 </details>
 
-<details><summary>延续</summary>
+<details><summary>阅读Sigma</summary>
 1.带歌词的音频播放功能。<br>
 2.带弹幕的视频播放功能。<br>
 3.更方便的书源编辑。<br>
 4.更丰富的书源功能实现。<br>
 5.更完善的订阅源功能。<br>
 </details>
-
-<a href="#readme">
-    <img src="https://img.shields.io/badge/-返回顶部-orange.svg" alt="#" align="right">
-</a>
-
-# Community-交流社区 [![](https://img.shields.io/badge/-Community-F5F5F5.svg)](#Community-交流社区-)
-
-#### Telegram
-[![Telegram-channel](https://img.shields.io/badge/Σ_Telegram-%E9%A2%91%E9%81%93-blue)](https://t.me/readsigma)
-
-#### WeChat
-[![WeChat-channel](https://img.shields.io/badge/Σ_%e5%be%ae%e4%bf%a1-%e5%85%ac%e4%bc%97%e5%8f%b7-green)](https://mp.weixin.qq.com/mp/appmsgalbum?action=getalbum&album_id=4345046964963590147)  
-<img src="https://open.weixin.qq.com/qr/code?username=legado_plus" width="100">
-
-#### Discord
-[![Discord](https://img.shields.io/discord/560731361414086666?color=%235865f2&label=Discord)](https://discord.gg/VtUfRyzRXn)
-
-#### Other
-https://www.yuque.com/legado/wiki/community
 
 <a href="#readme">
     <img src="https://img.shields.io/badge/-返回顶部-orange.svg" alt="#" align="right">
