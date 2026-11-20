@@ -15,6 +15,9 @@ interface CacheDao {
     @Query("select value from caches where `key` = :key and (deadline = 0 or deadline > :now)")
     fun get(key: String, now: Long): String?
 
+    @Query("select * from caches where substr(`key`, 1, length(:prefix)) = :prefix")
+    fun getByPrefix(prefix: String): List<Cache>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insert(vararg cache: Cache)
 

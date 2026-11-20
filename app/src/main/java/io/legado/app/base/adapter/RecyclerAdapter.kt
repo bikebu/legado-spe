@@ -256,8 +256,10 @@ abstract class RecyclerAdapter<ITEM, VB : ViewBinding>(protected val context: Co
     @Synchronized
     fun removeItem(item: ITEM) {
         kotlin.runCatching {
-            if (this.items.remove(item)) {
-                notifyItemRemoved(this.items.indexOf(item) + getHeaderCount())
+            val index = this.items.indexOf(item)
+            if (index >= 0) {
+                this.items.removeAt(index)
+                notifyItemRemoved(index + getHeaderCount())
             }
             onCurrentListChanged()
         }

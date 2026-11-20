@@ -10,6 +10,7 @@ import io.legado.app.constant.AppLog
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.SearchBook
 import io.legado.app.data.entities.SearchKeyword
+import io.legado.app.help.book.BookDuplicateHelp
 import io.legado.app.help.book.isNotShelf
 import io.legado.app.help.config.AppConfig
 import io.legado.app.model.webBook.SearchModel
@@ -70,6 +71,12 @@ class SearchViewModel(application: Application) : BaseViewModel(application) {
                         keys.add("${it.name}-${it.author}")
                         keys.add(it.name)
                         keys.add(it.bookUrl)
+                        // 标准化后的书名作者，繁简、版本后缀不同也视为已在书架
+                        val normalizedName = BookDuplicateHelp.normalizeName(it.name)
+                        if (normalizedName.isNotEmpty()) {
+                            keys.add(BookDuplicateHelp.shelfKey(it.name, it.author))
+                            keys.add(NORMALIZED_NAME_PREFIX + normalizedName)
+                        }
                     }
                 keys
             }.catch {
@@ -89,7 +96,15 @@ class SearchViewModel(application: Application) : BaseViewModel(application) {
         val author = book.author
         val bookUrl = book.bookUrl
         val key = if (author.isNotBlank()) "$name-$author" else name
-        return bookshelf.contains(key) || bookshelf.contains(bookUrl)
+        if (bookshelf.contains(key) || bookshelf.contains(bookUrl)) return true
+        val normalizedName = BookDuplicateHelp.normalizeName(name)
+        if (normalizedName.isEmpty()) return false
+        val normalizedKey = if (author.isNotBlank()) {
+            BookDuplicateHelp.shelfKey(name, author)
+        } else {
+            NORMALIZED_NAME_PREFIX + normalizedName
+        }
+        return bookshelf.contains(normalizedKey)
     }
 
     /**
@@ -157,6 +172,10 @@ class SearchViewModel(application: Application) : BaseViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         searchModel.close()
+    }
+
+    companion object {
+        private const val NORMALIZED_NAME_PREFIX = "\u0002"
     }
 
 }

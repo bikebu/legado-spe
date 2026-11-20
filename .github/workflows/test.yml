@@ -251,6 +251,13 @@ jobs:
           if-no-files-found: ignore
           path: ${{ github.workspace }}/mapping/mapping.txt
 
+      - name: Upload Room Schemas To Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: legado.${{ env.product }}.${{ env.type }}.schemas
+          if-no-files-found: ignore
+          path: ${{ github.workspace }}/app/schemas/
+
   prerelease:
     needs: [ prepare, build ]
     if: github.event_name != 'pull_request' && github.repository == 'Luoyacheng/legado-E'

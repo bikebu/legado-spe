@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sigma-Spe 图标前景，修改图形时请同步更新 docs/logo.svg 和各 mipmap 的 ic_launcher.png -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.74"
+        android:scaleY="0.74">
+        <path
+            android:pathData="M54,75 C47,71 38,70 28.5,72 L28.5,51 C38,49 47,50 54,54 Z"
+            android:fillColor="#E7A93C" />
+        <path
+            android:pathData="M54,75 C61,71 70,70 79.5,72 L79.5,51 C70,49 61,50 54,54 Z"
+            android:fillColor="#E7A93C" />
+        <path
+            android:pathData="M54,72.5 C47,68.5 38,67.5 30,69.5 L30,48.5 C38,46.5 47,47.5 54,51.5 Z"
+            android:fillColor="#EADBB9" />
+        <path
+            android:pathData="M54,72.5 C61,68.5 70,67.5 78,69.5 L78,48.5 C70,46.5 61,47.5 54,51.5 Z"
+            android:fillColor="#EADBB9" />
+        <path
+            android:pathData="M54,70 C47,66 38,65 30,67 L30,46 C38,44 47,45 54,49 Z"
+            android:fillColor="#FFF7E8" />
+        <path
+            android:pathData="M54,70 C61,66 70,65 78,67 L78,46 C70,44 61,45 54,49 Z"
+            android:fillColor="#FFF3DC" />
+        <path
+            android:pathData="M49,53.0 C43,50.8 38,50.4 34,51.4 M49,57.2 C43,55.0 38,54.6 34,55.6 M49,61.4 C43,59.2 38,58.8 34,59.8 M59,53.0 C65,50.8 70,50.4 74,51.4 M59,57.2 C65,55.0 70,54.6 74,55.6 M59,61.4 C65,59.2 70,58.8 74,59.8"
+            android:strokeColor="#D9C49B"
+            android:strokeWidth="1.3"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M54,23 C55.98,32.02 55.98,32.02 65,34 C55.98,35.98 55.98,35.98 54,45 C52.02,35.98 52.02,35.98 43,34 C52.02,32.02 52.02,32.02 54,23 Z"
+            android:fillColor="#F7C25A" />
+        <path
+            android:pathData="M67.5,22.9 C68.15,25.85 68.15,25.85 71.1,26.5 C68.15,27.15 68.15,27.15 67.5,30.1 C66.85,27.15 66.85,27.15 63.9,26.5 C66.85,25.85 66.85,25.85 67.5,22.9 Z"
+            android:fillColor="#FBE3A6" />
+        <path
+            android:pathData="M39.9,39.5 A1.6,1.6 0 1,0 43.1,39.5 A1.6,1.6 0 1,0 39.9,39.5 Z"
+            android:fillColor="#FBE3A6" />
+    </group>
+</vector>
