@@ -260,8 +260,12 @@ jobs:
 
   prerelease:
     needs: [ prepare, build ]
-    if: github.event_name != 'pull_request' && github.repository == 'Luoyacheng/legado-E'
+    # 只在本仓库发布，按所有者判断，仓库改名后仍然生效
+    if: github.event_name != 'pull_request' && github.repository_owner == 'bikebu'
     runs-on: ubuntu-latest
+    # 创建Release、更新beta标签需要写权限（仓库默认token只读）
+    permissions:
+      contents: write
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
     steps:
