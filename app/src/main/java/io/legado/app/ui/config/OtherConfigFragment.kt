@@ -40,7 +40,10 @@ import io.legado.app.utils.putPrefString
 import io.legado.app.utils.removePref
 import io.legado.app.utils.restart
 import io.legado.app.utils.setEdgeEffectColor
+import io.legado.app.utils.sendToClip
 import io.legado.app.utils.showDialogFragment
+import io.legado.app.utils.toastOnUi
+import io.legado.app.web.mcp.McpServer
 import splitties.init.appCtx
 
 /**
@@ -70,6 +73,7 @@ class OtherConfigFragment : PreferenceFragment(),
         upPreferenceSummary(PreferKey.preDownloadNum, AppConfig.preDownloadNum.toString())
         upPreferenceSummary(PreferKey.threadCount, AppConfig.threadCount.toString())
         upPreferenceSummary(PreferKey.webPort, AppConfig.webPort.toString())
+        upMcpSummary()
         AppConfig.defaultBookTreeUri?.let {
             upPreferenceSummary(PreferKey.defaultBookTreeUri, it)
         }
@@ -97,6 +101,7 @@ class OtherConfigFragment : PreferenceFragment(),
     override fun onPreferenceTreeClick(preference: Preference): Boolean {
         when (preference.key) {
             PreferKey.userAgent -> showUserAgentDialog()
+            KEY_MCP_SERVICE -> showMcpDialog()
             PreferKey.customHosts -> showCustomHostsDialog()
             PreferKey.videoSetting -> showDialogFragment(SettingsDialog(requireActivity()))
             PreferKey.defaultBookTreeUri -> localBookTreeSelect.launch {
@@ -240,6 +245,61 @@ class OtherConfigFragment : PreferenceFragment(),
         }
     }
 
+    private fun upMcpSummary() {
+        findPreference<Preference>(KEY_MCP_SERVICE)?.summary = getString(
+            if (LocalConfig.mcpEnabled) R.string.mcp_service_summary_on
+            else R.string.mcp_service_summary_off
+        )
+    }
+
+    /**
+     * MCP服务：开启、关闭、查看连接信息、重置令牌
+     */
+    private fun showMcpDialog() {
+        if (!LocalConfig.mcpEnabled) {
+            alert(getString(R.string.mcp_service), getString(R.string.mcp_service_off_msg)) {
+                positiveButton(getString(R.string.mcp_enable)) {
+                    if (LocalConfig.mcpToken.isNullOrEmpty()) {
+                        LocalConfig.mcpToken = McpServer.generateToken()
+                    }
+                    LocalConfig.mcpEnabled = true
+                    upMcpSummary()
+                    showMcpDialog()
+                }
+                cancelButton()
+            }
+            return
+        }
+        val token = LocalConfig.mcpToken
+            ?: McpServer.generateToken().also { LocalConfig.mcpToken = it }
+        val host = WebService.hostAddress
+        val address = if (WebService.isRun && host.startsWith("http")) {
+            host + McpServer.PATH
+        } else {
+            "http://手机IP:${AppConfig.webPort}${McpServer.PATH}"
+        }
+        val command =
+            "claude mcp add --transport http sigma-spe $address --header \"Authorization: Bearer $token\""
+        var message = getString(R.string.mcp_service_on_msg, address, token, command)
+        if (!WebService.isRun) {
+            message += "\n\n" + getString(R.string.mcp_web_service_not_running)
+        }
+        alert(getString(R.string.mcp_service), message) {
+            positiveButton(getString(R.string.mcp_copy_command)) {
+                requireContext().sendToClip(command)
+            }
+            neutralButton(getString(R.string.mcp_reset_token)) {
+                LocalConfig.mcpToken = McpServer.generateToken()
+                requireContext().toastOnUi(R.string.mcp_token_reset)
+                showMcpDialog()
+            }
+            negativeButton(getString(R.string.mcp_disable)) {
+                LocalConfig.mcpEnabled = false
+                upMcpSummary()
+            }
+        }
+    }
+
     private fun upPreferenceSummary(preferenceKey: String, value: String?) {
         val preference = findPreference<Preference>(preferenceKey) ?: return
         when (preferenceKey) {
@@ -368,6 +428,10 @@ class OtherConfigFragment : PreferenceFragment(),
             }
             cancelButton()
         }
+    }
+
+    companion object {
+        private const val KEY_MCP_SERVICE = "mcpService"
     }
 
 }
