@@ -727,6 +727,47 @@ class BookInfoActivity :
         }
     }
 
+    /**
+     * 加入书架前检查书架上是否已有同一本书（书名作者标准化后相同）
+     */
+    private fun addToBookshelfWithCheck() {
+        viewModel.findShelfDuplicate { shelfBook ->
+            if (shelfBook == null) {
+                viewModel.addToBookshelf {
+                    upTvBookshelf()
+                }
+            } else {
+                showShelfDuplicateAlert(shelfBook)
+            }
+        }
+    }
+
+    private fun showShelfDuplicateAlert(shelfBook: Book) {
+        val origin = if (shelfBook.isLocal) {
+            getString(R.string.local_book)
+        } else {
+            shelfBook.originName
+        }
+        alert(
+            getString(R.string.book_duplicate_add_title),
+            getString(R.string.book_duplicate_add_msg, shelfBook.name, shelfBook.author, origin)
+        ) {
+            positiveButton(getString(R.string.book_duplicate_still_add)) {
+                viewModel.addToBookshelf {
+                    upTvBookshelf()
+                }
+            }
+            negativeButton(getString(R.string.book_duplicate_change_source)) {
+                viewModel.replaceShelfBook(shelfBook) {
+                    upTvBookshelf()
+                }
+            }
+            neutralButton(getString(R.string.book_duplicate_open_shelf)) {
+                viewModel.showShelfBook(shelfBook)
+            }
+        }
+    }
+
     private fun upTvBookshelf() {
         if (viewModel.inBookshelf) {
             binding.tvShelf.text = getString(R.string.remove_from_bookshelf)
@@ -783,9 +824,7 @@ class BookInfoActivity :
                     if (book.isWebFile) {
                         showWebFileDownloadAlert()
                     } else {
-                        viewModel.addToBookshelf {
-                            upTvBookshelf()
-                        }
+                        addToBookshelfWithCheck()
                     }
                 }
             }
@@ -1130,9 +1169,7 @@ class BookInfoActivity :
             if (viewModel.inBookshelf) {
                 viewModel.saveBook(book)
             } else if (groupId > 0) {
-                viewModel.addToBookshelf {
-                    upTvBookshelf()
-                }
+                addToBookshelfWithCheck()
             }
         }
     }

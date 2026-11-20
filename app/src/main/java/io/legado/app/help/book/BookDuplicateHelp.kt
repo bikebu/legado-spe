@@ -1,5 +1,6 @@
 package io.legado.app.help.book
 
+import io.legado.app.constant.AppPattern
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
@@ -407,7 +408,43 @@ object BookDuplicateHelp {
     }
 
     fun normalizeAuthor(book: Book): String {
-        return normalizeText(book.getRealAuthor())
+        return normalizeAuthor(book.author)
+    }
+
+    fun normalizeAuthor(author: String): String {
+        return normalizeText(author.replace(AppPattern.authorRegex, ""))
+    }
+
+    /**
+     * 书名作者标准化后的key，用于判断书架上是否已有同一本书
+     */
+    fun shelfKey(name: String, author: String): String {
+        return normalizeName(name) + "\u0001" + normalizeAuthor(author)
+    }
+
+    /**
+     * 加书时查找书架上标准化后书名、作者都相同的书，只查数据库，不联网
+     */
+    fun findShelfMatch(book: Book): Book? {
+        val name = normalizeName(book.name)
+        if (name.isEmpty()) return null
+        val author = normalizeAuthor(book)
+        val media = mediaOf(book)
+        return appDb.bookDao.all.firstOrNull {
+            it.bookUrl != book.bookUrl
+                && !it.isNotShelf
+                && mediaOf(it) == media
+                && normalizeName(it.name) == name
+                && normalizeAuthor(it) == author
+        }
+    }
+
+    private fun mediaOf(book: Book): Int {
+        return when {
+            book.isAudio -> 1
+            book.isVideo -> 2
+            else -> 0
+        }
     }
 
     private fun isSimilarName(a: String, b: String): Boolean {
@@ -446,11 +483,7 @@ object BookDuplicateHelp {
         val name = normalizeName(book.name)
         val author = normalizeAuthor(book)
         val series = seriesRegex.findAll(name).map { it.value }.sorted().toList()
-        val media = when {
-            book.isAudio -> 1
-            book.isVideo -> 2
-            else -> 0
-        }
+        val media = mediaOf(book)
     }
 
     private class UnionFind(size: Int) {

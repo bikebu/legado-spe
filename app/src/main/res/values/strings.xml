@@ -1358,4 +1358,9 @@
     <string name="book_duplicate_reason_similar_name">同作者，书名相近</string>
     <string name="book_duplicate_reason_similar_content">正文相似</string>
     <string name="book_duplicate_progress">读到 %1$s · 共 %2$d 章</string>
+    <string name="book_duplicate_add_title">书架上已有这本书</string>
+    <string name="book_duplicate_add_msg">书架上的《%1$s》%2$s（%3$s）可能和这本是同一本书。</string>
+    <string name="book_duplicate_still_add">仍然加入</string>
+    <string name="book_duplicate_change_source">书架上的书换到此源</string>
+    <string name="book_duplicate_open_shelf">打开书架上的书</string>
 </resources>
