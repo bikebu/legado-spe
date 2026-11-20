@@ -7,9 +7,8 @@ import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookFingerprint
 import io.legado.app.data.entities.ReadRecord
+import io.legado.app.model.ReadBook
 import io.legado.app.help.CacheManager
-import io.legado.app.model.SourceCallBack
-import io.legado.app.model.localBook.LocalBook
 import io.legado.app.utils.ChineseUtils
 import io.legado.app.utils.MD5Utils
 import kotlinx.coroutines.CancellationException
@@ -64,9 +63,6 @@ object BookDuplicateHelp {
     // 每个采样章节最多读取的字数
     private const val MAX_CHAPTER_CHARS = 10000
 
-    // SimHash汉明距离阈值
-    private const val SIMHASH_DISTANCE = 10
-
     private const val SHINGLE_SIZE = 3
 
     private val noiseKeywords =
@@ -95,44 +91,52 @@ object BookDuplicateHelp {
 
     private val imgRegex = Regex("<img[^>]*>", RegexOption.IGNORE_CASE)
 
-    /**
-     * 查找书架重复书籍
-     * @param progress 计算指纹进度 (当前, 总数)
-     */
+    enum class ScanPhase { METADATA, FINGERPRINTS, CONTENT, GROUPING }
+
+    /** 进度按阶段上报；正文校验和候选比较分别计数。 */
     suspend fun findDuplicates(
         books: List<Book>,
         forceRefresh: Boolean = false,
-        progress: ((Int, Int) -> Unit)? = null
+        progress: ((ScanPhase, Int, Int) -> Unit)? = null
     ): List<DuplicateGroup> {
+        val scanContext = coroutineContext
         val shelfBooks = books.filterNot { it.isNotShelf }
         val size = shelfBooks.size
         if (size < 2) return emptyList()
-        val keys = shelfBooks.map { BookKey(it) }
+        progress?.invoke(ScanPhase.METADATA, 0, size)
+        val keys = shelfBooks.map {
+            scanContext.ensureActive()
+            BookKey(it)
+        }
         val unionFind = UnionFind(size)
-        val contentMatches = hashMapOf<Set<String>, Int>()
+        val contentMatches = hashMapOf<Long, Int>()
         val pairReasons = hashMapOf<Long, MutableSet<Reason>>()
+        fun pairKey(i: Int, j: Int): Long =
+            minOf(i, j).toLong() shl 32 or maxOf(i, j).toLong()
         fun link(i: Int, j: Int, reason: Reason) {
             unionFind.union(i, j)
-            val pair = if (i < j) i.toLong() shl 32 or j.toLong() else j.toLong() shl 32 or i.toLong()
-            pairReasons.getOrPut(pair) { hashSetOf() }.add(reason)
+            pairReasons.getOrPut(pairKey(i, j)) { hashSetOf() }.add(reason)
         }
+        var pairChecks = 0
         // 书名相同
         keys.indices.filter { keys[it].name.isNotEmpty() }
             .groupBy { keys[it].media to keys[it].name }
             .values.forEach { indices ->
+                scanContext.ensureActive()
                 forEachPair(indices) { i, j ->
-                    if (keys[i].author == keys[j].author) {
-                        link(i, j, Reason.SAME_NAME_AUTHOR)
-                    } else {
-                        link(i, j, Reason.SAME_NAME)
-                    }
+                    if (pairChecks++ and 255 == 0) scanContext.ensureActive()
+                    link(i, j, if (keys[i].author == keys[j].author) {
+                        Reason.SAME_NAME_AUTHOR
+                    } else Reason.SAME_NAME)
                 }
             }
         // 作者相同，书名相近
         keys.indices.filter { keys[it].author.isNotEmpty() && keys[it].name.isNotEmpty() }
             .groupBy { keys[it].media to keys[it].author }
             .values.forEach { indices ->
+                scanContext.ensureActive()
                 forEachPair(indices) { i, j ->
+                    if (pairChecks++ and 255 == 0) scanContext.ensureActive()
                     val a = keys[i]
                     val b = keys[j]
                     if (a.name != b.name && a.series == b.series && isSimilarName(a.name, b.name)) {
@@ -140,50 +144,85 @@ object BookDuplicateHelp {
                     }
                 }
             }
-        // 正文相似
-        val hashes = shelfBooks.mapIndexed { index, book ->
-            coroutineContext.ensureActive()
-            progress?.invoke(index + 1, size)
-            try {
-                getFingerprint(book, forceRefresh)?.hashList().orEmpty()
+        // 分批预取目录和旧指纹，限制 IN 参数及临时目录占用。
+        val hashes = MutableList<List<Long>>(size) { emptyList() }
+        progress?.invoke(ScanPhase.FINGERPRINTS, 0, size)
+        shelfBooks.indices.chunked(128).forEach { indices ->
+            scanContext.ensureActive()
+            val urls = indices.map { shelfBooks[it] }.filter { supportsFingerprint(it) }
+                .map { it.bookUrl }
+            val prefetched = try {
+                val chapters = if (urls.isEmpty()) emptyMap() else {
+                    appDb.bookChapterDao.getSampleChapters(urls, MAX_SCAN_CHAPTERS).groupBy { it.bookUrl }
+                }
+                val cached = if (urls.isEmpty()) emptyMap() else {
+                    appDb.bookFingerprintDao.getByBookUrls(urls).associateBy { it.bookUrl }
+                }
+                chapters to cached
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                AppLog.put("读取书籍指纹失败：${book.name}", e)
-                emptyList()
+                // 某条目录记录损坏时回退逐书读取，保留其他书籍和名称匹配结果。
+                AppLog.put("批量读取去重数据失败，改为逐书读取", e)
+                null
             }
-        }
-        for (i in 0 until size) {
-            if (hashes[i].isEmpty()) continue
-            coroutineContext.ensureActive()
-            for (j in i + 1 until size) {
-                if (hashes[j].isEmpty() || keys[i].media != keys[j].media) continue
-                val count = contentMatchCount(hashes[i], hashes[j])
-                if (count > 0) {
-                    contentMatches[setOf(shelfBooks[i].bookUrl, shelfBooks[j].bookUrl)] = count
-                    link(i, j, if (count >= 2) Reason.SIMILAR_CONTENT else Reason.POSSIBLE_CONTENT)
-                    if (keys[i].series != keys[j].series) link(i, j, Reason.SERIES_CONFLICT)
+            indices.forEach { index ->
+                scanContext.ensureActive()
+                val book = shelfBooks[index]
+                try {
+                    if (supportsFingerprint(book)) {
+                        hashes[index] = if (prefetched == null) {
+                            getFingerprint(book, forceRefresh)?.hashList().orEmpty()
+                        } else {
+                            buildFingerprint(
+                                book, forceRefresh,
+                                prefetched.first[book.bookUrl].orEmpty(), prefetched.second[book.bookUrl]
+                            ).hashList()
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    AppLog.put("读取书籍指纹失败：${book.name}", e)
                 }
+                progress?.invoke(ScanPhase.FINGERPRINTS, index + 1, size)
             }
         }
-        // 分组
+        progress?.invoke(ScanPhase.CONTENT, 0, size)
+        DuplicateContentMatcher(hashes) { scanContext.ensureActive() }.forEachMatch(
+            checkActive = { scanContext.ensureActive() },
+            progress = { current, total -> progress?.invoke(ScanPhase.CONTENT, current, total) }
+        ) { i, j, count ->
+            if (keys[i].media == keys[j].media) {
+                contentMatches[pairKey(i, j)] = count
+                link(i, j, if (count >= 2) Reason.SIMILAR_CONTENT else Reason.POSSIBLE_CONTENT)
+                if (keys[i].series != keys[j].series) link(i, j, Reason.SERIES_CONFLICT)
+            }
+        }
+        progress?.invoke(ScanPhase.GROUPING, 0, size)
+        // 每条匹配关系只归组一次，避免每个分组都重新遍历全部关系。
+        val edgesByRoot = pairReasons.entries.groupBy {
+            scanContext.ensureActive()
+            unionFind.find((it.key ushr 32).toInt())
+        }
         val ignored = getIgnored()
         val groups = (0 until size).groupBy { unionFind.find(it) }.values
             .filter { it.size > 1 }
             .mapNotNull { indices ->
-                val indexSet = indices.toHashSet()
+                scanContext.ensureActive()
+                val edges = edgesByRoot[unionFind.find(indices.first())].orEmpty()
                 val reasons = hashSetOf<Reason>()
-                pairReasons.forEach { (pair, r) ->
-                    if ((pair ushr 32).toInt() in indexSet) reasons.addAll(r)
+                val matches = hashMapOf<Set<String>, Set<Reason>>()
+                val counts = hashMapOf<Set<String>, Int>()
+                edges.forEach { (pair, evidence) ->
+                    scanContext.ensureActive()
+                    val urls = setOf(shelfBooks[(pair ushr 32).toInt()].bookUrl, shelfBooks[pair.toInt()].bookUrl)
+                    reasons.addAll(evidence)
+                    matches[urls] = evidence
+                    contentMatches[pair]?.let { counts[urls] = it }
                 }
                 val groupBooks = indices.map { shelfBooks[it] }.sortedWith(keepComparator)
-                val matches = pairReasons.filterKeys { (it ushr 32).toInt() in indexSet }
-                    .mapKeys { (pair, _) ->
-                        setOf(shelfBooks[(pair ushr 32).toInt()].bookUrl, shelfBooks[pair.toInt()].bookUrl)
-                    }
-                DuplicateGroup(
-                    groupBooks, reasons, matches, contentMatches.filterKeys { it in matches }
-                ).takeIf { it.key !in ignored }
+                DuplicateGroup(groupBooks, reasons, matches, counts).takeIf { it.key !in ignored }
             }
         return groups.sortedBy { group -> group.reasons.minOf { it.ordinal } }
     }
@@ -192,7 +231,8 @@ object BookDuplicateHelp {
      * 合并重复书籍，保留keep，删除removes
      * 合并分组、阅读进度、书签、阅读时长、自定义信息
      */
-    fun merge(keep: Book, removes: List<Book>) {
+    fun merge(keep: Book, removes: List<Book>) = synchronized(BookMergeHistory) {
+        BookMergeHistory.prune()
         val removeList = arrayListOf<Book>()
         appDb.runInTransaction {
             val newKeep = checkNotNull(appDb.bookDao.getBook(keep.bookUrl)) {
@@ -207,6 +247,9 @@ object BookDuplicateHelp {
                     check(!current.isNotShelf) { "待合并的书籍已发生变化，请重新扫描" }
                     removeList.add(current)
                 }
+            if (removeList.isEmpty()) return@runInTransaction
+            // 快照文件写入成功、撤回标记加入本次事务后才允许修改书籍。
+            BookMergeHistory.capture(listOf(newKeep) + removeList)
             val removeUrls = removeList.map { it.bookUrl }.toHashSet()
             val keepToc = appDb.bookChapterDao.getChapterList(newKeep.bookUrl)
             removeList.forEach { old ->
@@ -225,21 +268,15 @@ object BookDuplicateHelp {
                 mergeReadRecord(newKeep, old, removeUrls)
             }
             appDb.bookDao.update(newKeep)
-            removeList.forEach { it.delete() }
+            removeList.forEach { appDb.bookDao.delete(it) }
         }
-        removeList.forEach {
-            runCatching {
-                if (it.isLocal) {
-                    LocalBook.deleteBook(it, false)
-                } else {
-                    val source = appDb.bookSourceDao.getBookSource(it.origin)
-                    SourceCallBack.callBackBook(SourceCallBack.DEL_BOOK_SHELF, source, it)
-                }
-            }.onFailure { error ->
-                // 数据库已提交，清理失败不能让界面把合并当作失败再次提交。
-                AppLog.put("合并后的书籍清理失败", error)
-            }
+        runCatching {
+            if (removeList.any { it.bookUrl == ReadBook.book?.bookUrl }) ReadBook.book = null
+        }.onFailure { error ->
+            runCatching { AppLog.put("合并后刷新阅读状态失败", error) }
         }
+        // 去重不代表不喜欢这本书，不调用书源删除事件。
+        // 保留正文缓存和本地封面供撤回使用，源文件始终不删除。
     }
 
     fun ignore(group: DuplicateGroup) {
@@ -399,20 +436,33 @@ object BookDuplicateHelp {
      * 获取正文指纹，只使用已缓存的正文（本地TXT视为已缓存）
      * 采样章节没有变化时直接使用数据库中的指纹
      */
+    private fun supportsFingerprint(book: Book) =
+        !book.isAudio && !book.isVideo && !book.isImage && !book.isPdf
+
     suspend fun getFingerprint(book: Book, forceRefresh: Boolean = false): BookFingerprint? {
-        if (book.isAudio || book.isVideo || book.isImage || book.isPdf) return null
-        val chapters = appDb.bookChapterDao.getChapterList(book.bookUrl, 0, MAX_SCAN_CHAPTERS - 1)
-        val candidates = chapters.filter {
-            !it.isVolume
-                && !boilerplateTitleRegex.containsMatchIn(it.title)
-                && BookHelp.hasContent(book, it)
-        }
+        if (!supportsFingerprint(book)) return null
+        return buildFingerprint(
+            book, forceRefresh,
+            appDb.bookChapterDao.getChapterList(book.bookUrl, 0, MAX_SCAN_CHAPTERS - 1),
+            appDb.bookFingerprintDao.get(book.bookUrl)
+        )
+    }
+
+    private suspend fun buildFingerprint(
+        book: Book,
+        forceRefresh: Boolean,
+        chapters: List<BookChapter>,
+        old: BookFingerprint?
+    ): BookFingerprint {
         // 每次读取有限的采样正文以校验内容变化，只复用昂贵的 SimHash 计算。
         val samples = arrayListOf<Pair<String, String>>()
         var readFailed = false
-        for (chapter in candidates) {
+        for (chapter in chapters) {
             coroutineContext.ensureActive()
             if (samples.size >= SAMPLE_CHAPTERS) break
+            if (chapter.isVolume || boilerplateTitleRegex.containsMatchIn(chapter.title)
+                || !BookHelp.hasContent(book, chapter)
+            ) continue
             val content = try {
                 BookHelp.getContent(book, chapter)
             } catch (e: CancellationException) {
@@ -429,7 +479,6 @@ object BookDuplicateHelp {
             samples.add(chapter.url to text)
         }
         val sourceKey = fingerprintSourceKey(samples)
-        val old = appDb.bookFingerprintDao.get(book.bookUrl)
         if (!forceRefresh && old != null && old.sourceKey == sourceKey) return old
         val hashes = samples.map { (_, text) ->
             coroutineContext.ensureActive()
@@ -456,39 +505,15 @@ object BookDuplicateHelp {
         }
     })
 
-    /** 先合并同书内的近似采样，再做最大一对一匹配，避免重复正文抬高置信度。 */
-    internal fun contentMatchCount(a: List<Long>, b: List<Long>): Int {
-        fun close(x: Long, y: Long) = java.lang.Long.bitCount(x xor y) <= SIMHASH_DISTANCE
-        fun clusters(hashes: List<Long>): List<List<Long>> {
-            val groups = arrayListOf<List<Long>>()
-            hashes.distinct().forEach { hash ->
-                val touching = groups.filter { group -> group.any { close(it, hash) } }
-                groups.removeAll(touching.toSet())
-                groups.add(touching.flatten() + hash)
-            }
-            return groups
-        }
-        val left = clusters(a)
-        val right = clusters(b)
-        val matched = IntArray(right.size) { -1 }
-        fun augment(i: Int, visited: BooleanArray): Boolean {
-            for (j in right.indices) {
-                if (visited[j] || left[i].none { x -> right[j].any { y -> close(x, y) } }) continue
-                visited[j] = true
-                if (matched[j] == -1 || augment(matched[j], visited)) {
-                    matched[j] = i
-                    return true
-                }
-            }
-            return false
-        }
-        return left.indices.count { augment(it, BooleanArray(right.size)) }
-    }
+    internal fun contentMatchCount(a: List<Long>, b: List<Long>): Int =
+        DuplicateContentMatcher.count(a, b)
 
-    private fun simHash(text: String): Long {
+    private suspend fun simHash(text: String): Long {
+        val scanContext = coroutineContext
         if (text.length < SHINGLE_SIZE) return 0L
         val weights = IntArray(64)
         for (start in 0..text.length - SHINGLE_SIZE) {
+            if (start and 255 == 0) scanContext.ensureActive()
             val hash = shingleHash(text, start)
             for (bit in 0 until 64) {
                 if ((hash ushr bit) and 1L == 1L) weights[bit]++ else weights[bit]--

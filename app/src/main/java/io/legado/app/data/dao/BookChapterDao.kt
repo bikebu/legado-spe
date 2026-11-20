@@ -22,6 +22,9 @@ interface BookChapterDao {
     @Query("select * from chapters where bookUrl = :bookUrl and `index` >= :start and `index` <= :end order by `index`")
     fun getChapterList(bookUrl: String, start: Int, end: Int): List<BookChapter>
 
+    @Query("select * from chapters where bookUrl in (:bookUrls) and `index` >= 0 and `index` < :limit order by bookUrl, `index`")
+    fun getSampleChapters(bookUrls: List<String>, limit: Int): List<BookChapter>
+
     @Query("select * from chapters where bookUrl = :bookUrl and `index` = :index")
     fun getChapter(bookUrl: String, index: Int): BookChapter?
 

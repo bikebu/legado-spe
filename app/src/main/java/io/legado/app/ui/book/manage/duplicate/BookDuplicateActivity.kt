@@ -10,6 +10,9 @@ import io.legado.app.R
 import io.legado.app.base.VMBaseActivity
 import io.legado.app.data.entities.Book
 import io.legado.app.databinding.ActivityBookDuplicateBinding
+import io.legado.app.help.book.BookMergeHistory
+import java.text.DateFormat
+import java.util.Date
 import io.legado.app.help.book.BookDuplicateHelp.DuplicateGroup
 import io.legado.app.lib.dialogs.alert
 import io.legado.app.lib.theme.primaryColor
@@ -42,14 +45,12 @@ class BookDuplicateActivity :
     }
 
     override fun observeLiveBus() {
-        viewModel.progressLiveData.observe(this) { text ->
-            if (text == null) {
-                waitDialog.dismiss()
-            } else {
-                waitDialog.setText(text)
-                if (!waitDialog.isShowing) {
-                    waitDialog.show()
-                }
+        viewModel.progressLiveData.observe(this) { updateWaitDialog() }
+        viewModel.operationLiveData.observe(this) { updateWaitDialog() }
+        viewModel.historyLiveData.observe(this) { records ->
+            if (records != null) {
+                viewModel.consumeHistory()
+                showHistory(records)
             }
         }
         viewModel.mergingLiveData.observe(this) { adapter.merging = it }
@@ -66,6 +67,7 @@ class BookDuplicateActivity :
 
     override fun onCompatOptionsItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
+            R.id.menu_merge_history -> viewModel.loadHistory()
             R.id.menu_rescan -> viewModel.scan()
             R.id.menu_rebuild_fingerprints -> viewModel.scan(forceRefresh = true)
             R.id.menu_clear_ignore -> viewModel.clearIgnored()
@@ -118,6 +120,48 @@ class BookDuplicateActivity :
                 "\n\n" + removes.joinToString("\n") { "${it.name} · ${it.author} (${it.originName})" }
         ) {
             okButton { viewModel.merge(group, keep, removes) }
+            cancelButton()
+        }
+    }
+
+    private fun updateWaitDialog() {
+        val operation = viewModel.operationLiveData.value
+        val text = operation ?: viewModel.progressLiveData.value
+        if (text == null) {
+            waitDialog.dismiss()
+        } else {
+            waitDialog.setCancelable(operation == null)
+            waitDialog.setText(text)
+            if (!waitDialog.isShowing) waitDialog.show()
+        }
+    }
+
+    private fun showHistory(records: List<BookMergeHistory.Record>) {
+        if (records.isEmpty()) {
+            alert(getString(R.string.book_duplicate_history), getString(R.string.book_duplicate_history_empty)) {
+                okButton()
+            }
+            return
+        }
+        val format = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+        val labels = records.map { record ->
+            getString(
+                R.string.book_duplicate_history_item, record.keepName, record.removedCount,
+                format.format(Date(record.createdAt)),
+                format.format(Date(record.createdAt + 7L * 24 * 60 * 60 * 1000))
+            )
+        }
+        alert(getString(R.string.book_duplicate_history)) {
+            items(labels) { _, index ->
+                val record = records[index]
+                alert(
+                    getString(R.string.book_duplicate_undo),
+                    getString(R.string.book_duplicate_undo_confirm, record.keepName)
+                ) {
+                    okButton { viewModel.undoMerge(record) }
+                    cancelButton()
+                }
+            }
             cancelButton()
         }
     }

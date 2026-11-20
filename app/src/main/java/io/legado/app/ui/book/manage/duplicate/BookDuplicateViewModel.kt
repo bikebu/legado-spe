@@ -1,6 +1,7 @@
 package io.legado.app.ui.book.manage.duplicate
 
 import android.app.Application
+import android.os.SystemClock
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.MutableLiveData
 import kotlinx.coroutines.Dispatchers
@@ -10,6 +11,7 @@ import io.legado.app.base.BaseViewModel
 import io.legado.app.constant.AppLog
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
+import io.legado.app.help.book.BookMergeHistory
 import io.legado.app.help.book.BookDuplicateHelp
 import io.legado.app.help.book.BookDuplicateHelp.DuplicateGroup
 import io.legado.app.help.coroutine.Coroutine
@@ -19,6 +21,8 @@ class BookDuplicateViewModel(application: Application) : BaseViewModel(applicati
     val groupsLiveData = MutableLiveData<List<DuplicateGroup>>()
     val progressLiveData = MutableLiveData<String?>()
     val mergingLiveData = MutableLiveData(false)
+    val operationLiveData = MutableLiveData<String?>()
+    val historyLiveData = MutableLiveData<List<BookMergeHistory.Record>?>()
     private var scanVersion = 0
     private var scanCoroutine: Coroutine<List<DuplicateGroup>>? = null
 
@@ -26,14 +30,23 @@ class BookDuplicateViewModel(application: Application) : BaseViewModel(applicati
         if (mergingLiveData.value == true) return
         val version = ++scanVersion
         scanCoroutine?.cancel()
-        progressLiveData.value = context.getString(R.string.book_duplicate_scanning, 0, 0)
+        progressLiveData.value = context.getString(R.string.book_duplicate_scanning_metadata)
         scanCoroutine = execute {
-            BookDuplicateHelp.findDuplicates(appDb.bookDao.all, forceRefresh) { current, total ->
-                viewModelScope.launch(Dispatchers.Main) {
-                    if (version == scanVersion) {
-                        progressLiveData.value = context.getString(
-                            R.string.book_duplicate_scanning, current, total
-                        )
+            var lastPhase: BookDuplicateHelp.ScanPhase? = null
+            var lastUpdate = 0L
+            BookDuplicateHelp.findDuplicates(appDb.bookDao.all, forceRefresh) { phase, current, total ->
+                val now = SystemClock.elapsedRealtime()
+                if (phase != lastPhase || current == total || now - lastUpdate >= 100L) {
+                    lastPhase = phase
+                    lastUpdate = now
+                    val text = when (phase) {
+                        BookDuplicateHelp.ScanPhase.METADATA -> context.getString(R.string.book_duplicate_scanning_metadata)
+                        BookDuplicateHelp.ScanPhase.FINGERPRINTS -> context.getString(R.string.book_duplicate_scanning_content, current, total)
+                        BookDuplicateHelp.ScanPhase.CONTENT -> context.getString(R.string.book_duplicate_comparing_content, current, total)
+                        BookDuplicateHelp.ScanPhase.GROUPING -> context.getString(R.string.book_duplicate_grouping)
+                    }
+                    viewModelScope.launch(Dispatchers.Main) {
+                        if (version == scanVersion) progressLiveData.value = text
                     }
                 }
             }
@@ -60,9 +73,11 @@ class BookDuplicateViewModel(application: Application) : BaseViewModel(applicati
         if (groupsLiveData.value?.none { it.key == group.key } != false) return
         cancelScan()
         mergingLiveData.value = true
+        operationLiveData.value = context.getString(R.string.book_duplicate_merging)
         execute {
             BookDuplicateHelp.merge(keep, removes)
         }.onSuccess {
+            context.toastOnUi(R.string.book_duplicate_merged)
             // 部分合并后重新扫描，不能沿用原分组关系。
             groupsLiveData.value = emptyList()
         }.onError {
@@ -70,6 +85,47 @@ class BookDuplicateViewModel(application: Application) : BaseViewModel(applicati
             context.toastOnUi(it.localizedMessage)
         }.onFinally {
             mergingLiveData.value = false
+            operationLiveData.value = null
+            scan()
+        }
+    }
+
+    fun loadHistory() {
+        if (mergingLiveData.value == true) return
+        mergingLiveData.value = true
+        operationLiveData.value = context.getString(R.string.book_duplicate_loading_history)
+        execute {
+            BookMergeHistory.records()
+        }.onSuccess {
+            historyLiveData.value = it
+        }.onError {
+            context.toastOnUi(it.localizedMessage)
+        }.onFinally {
+            mergingLiveData.value = false
+            operationLiveData.value = null
+        }
+    }
+
+    fun consumeHistory() {
+        historyLiveData.value = null
+    }
+
+    fun undoMerge(record: BookMergeHistory.Record) {
+        if (mergingLiveData.value == true) return
+        cancelScan()
+        mergingLiveData.value = true
+        operationLiveData.value = context.getString(R.string.book_duplicate_restoring)
+        execute {
+            BookMergeHistory.restore(record.id)
+        }.onSuccess {
+            groupsLiveData.value = emptyList()
+            context.toastOnUi(R.string.book_duplicate_restored)
+        }.onError {
+            AppLog.put("撤回书籍合并失败", it)
+            context.toastOnUi(it.localizedMessage)
+        }.onFinally {
+            mergingLiveData.value = false
+            operationLiveData.value = null
             scan()
         }
     }
