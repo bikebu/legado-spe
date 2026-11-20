@@ -20,6 +20,7 @@ import io.legado.app.data.entities.BookSource
 import io.legado.app.exception.NoBooksDirException
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.AppWebDav
+import io.legado.app.help.book.BookDuplicateHelp
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.getExportFileName
 import io.legado.app.help.book.getRemoteUrl
@@ -469,6 +470,59 @@ class BookInfoViewModel(application: Application) : BaseViewModel(application) {
             inBookshelf = true
         }.onSuccess {
             success?.invoke()
+        }
+    }
+
+    /**
+     * 加入书架前查找书架上标准化后书名作者相同的书
+     */
+    fun findShelfDuplicate(result: (Book?) -> Unit) {
+        val book = bookData.value ?: return
+        execute {
+            BookDuplicateHelp.findShelfMatch(book)
+        }.onSuccess {
+            result.invoke(it)
+        }.onError {
+            AppLog.put("查找书架重复书籍出错\n${it.localizedMessage}", it)
+            result.invoke(null)
+        }
+    }
+
+    /**
+     * 显示书架上已有的书
+     */
+    fun showShelfBook(shelfBook: Book) {
+        inBookshelf = true
+        upBook(shelfBook)
+    }
+
+    /**
+     * 书架上已有的书换到当前书源，合并进度、分组、书签、阅读时长后删除原书
+     */
+    fun replaceShelfBook(shelfBook: Book, success: (() -> Unit)?) {
+        execute {
+            val book = bookData.value ?: return@execute
+            val toc = chapterListData.value.orEmpty()
+            // 保留加书时选择的分组
+            val selectedGroup = book.group
+            shelfBook.migrateTo(book, toc)
+            book.group = book.group or selectedGroup
+            book.removeType(BookType.notShelf)
+            book.removeType(BookType.updateError)
+            // 新书写入和合并在同一个事务里，合并失败时不会留下两本书
+            BookDuplicateHelp.merge(book, listOf(shelfBook)) {
+                appDb.bookDao.insert(book)
+                if (toc.isNotEmpty()) {
+                    appDb.bookChapterDao.insert(*toc.toTypedArray())
+                }
+            }
+            inBookshelf = true
+            SourceCallBack.callBackBook(SourceCallBack.ADD_BOOK_SHELF, bookSource, book)
+            bookData.postValue(book)
+        }.onSuccess {
+            success?.invoke()
+        }.onError {
+            AppLog.put("书架书籍换源出错\n${it.localizedMessage}", it, true)
         }
     }
 

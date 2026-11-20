@@ -11,6 +11,7 @@ import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import io.legado.app.data.dao.BookChapterDao
 import io.legado.app.data.dao.BookDao
+import io.legado.app.data.dao.BookFingerprintDao
 import io.legado.app.data.dao.BookGroupDao
 import io.legado.app.data.dao.BookSourceDao
 import io.legado.app.data.dao.BookmarkDao
@@ -32,6 +33,7 @@ import io.legado.app.data.dao.ServerDao
 import io.legado.app.data.dao.TxtTocRuleDao
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
+import io.legado.app.data.entities.BookFingerprint
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.BookSourcePart
@@ -67,13 +69,14 @@ val appDb by lazy {
 }
 
 @Database(
-    version = 89,
+    version = 90,
     exportSchema = true,
     entities = [Book::class, BookGroup::class, BookSource::class, BookChapter::class,
         ReplaceRule::class, SearchBook::class, SearchKeyword::class, Cookie::class,
         RssSource::class, Bookmark::class, RssArticle::class, RssReadRecord::class,
         RssStar::class, TxtTocRule::class, ReadRecord::class, HttpTTS::class, Cache::class,
-        RuleSub::class, DictRule::class, KeyboardAssist::class, Server::class],
+        RuleSub::class, DictRule::class, KeyboardAssist::class, Server::class,
+        BookFingerprint::class],
     views = [BookSourcePart::class],
     autoMigrations = [
         AutoMigration(from = 43, to = 44),
@@ -121,7 +124,8 @@ val appDb by lazy {
         AutoMigration(from = 85, to = 86),
         AutoMigration(from = 86, to = 87),
         AutoMigration(from = 87, to = 88),
-        AutoMigration(from = 88, to = 89)
+        AutoMigration(from = 88, to = 89),
+        AutoMigration(from = 89, to = 90)
     ]
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -130,6 +134,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract val bookGroupDao: BookGroupDao
     abstract val bookSourceDao: BookSourceDao
     abstract val bookChapterDao: BookChapterDao
+    abstract val bookFingerprintDao: BookFingerprintDao
     abstract val replaceRuleDao: ReplaceRuleDao
     abstract val searchBookDao: SearchBookDao
     abstract val searchKeywordDao: SearchKeywordDao

@@ -252,6 +252,11 @@
             android:name=".ui.book.manage.BookshelfManageActivity"
             android:launchMode="singleTop"
             android:screenOrientation="behind" />
+        <!-- 查找重复书籍 -->
+        <activity
+            android:name=".ui.book.manage.duplicate.BookDuplicateActivity"
+            android:launchMode="singleTop"
+            android:screenOrientation="behind" />
         <!-- 书源调试 -->
         <activity
             android:name=".ui.book.source.debug.BookSourceDebugActivity"

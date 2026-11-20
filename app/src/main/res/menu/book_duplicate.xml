@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item
+        android:id="@+id/menu_merge_history"
+        android:title="@string/book_duplicate_history" />
+
+    <item
+        android:id="@+id/menu_rescan"
+        android:title="@string/book_duplicate_rescan" />
+
+    <item
+        android:id="@+id/menu_rebuild_fingerprints"
+        android:title="@string/book_duplicate_rebuild_fingerprints" />
+
+    <item
+        android:id="@+id/menu_clear_ignore"
+        android:title="@string/book_duplicate_clear_ignore" />
+
+</menu>
