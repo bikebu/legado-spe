@@ -17,6 +17,12 @@ import io.legado.app.utils.getCompatColor
 class BookDuplicateAdapter(context: Context, private val callBack: CallBack) :
     RecyclerAdapter<DuplicateGroup, ItemBookDuplicateGroupBinding>(context) {
 
+    var merging: Boolean = false
+        set(value) {
+            field = value
+            notifyDataSetChanged()
+        }
+
     // 分组key -> 保留的书籍bookUrl
     private val keepMap = hashMapOf<String, String>()
 
@@ -35,6 +41,8 @@ class BookDuplicateAdapter(context: Context, private val callBack: CallBack) :
         item: DuplicateGroup,
         payloads: MutableList<Any>
     ) {
+        binding.tvMerge.isEnabled = !merging
+        binding.tvIgnore.isEnabled = !merging
         binding.tvReasons.text = item.reasons.sortedBy { it.ordinal }.joinToString(" · ") {
             context.getString(reasonRes(it))
         }
@@ -61,12 +69,13 @@ class BookDuplicateAdapter(context: Context, private val callBack: CallBack) :
             val isKeep = book.bookUrl == keep.bookUrl
             bookBinding.rbKeep.isChecked = isKeep
             bookBinding.tvState.setText(
-                if (isKeep) R.string.book_duplicate_keep else R.string.book_duplicate_remove
+                if (isKeep) R.string.book_duplicate_keep else R.string.book_duplicate_candidate
             )
             bookBinding.tvState.setTextColor(
                 if (isKeep) context.accentColor else context.getCompatColor(R.color.secondaryText)
             )
             bookBinding.root.setOnClickListener {
+                if (merging) return@setOnClickListener
                 keepMap[item.key] = book.bookUrl
                 notifyItemChanged(holder.layoutPosition)
             }
@@ -87,7 +96,7 @@ class BookDuplicateAdapter(context: Context, private val callBack: CallBack) :
         }
     }
 
-    private fun reasonRes(reason: Reason): Int {
+    fun reasonRes(reason: Reason): Int {
         return when (reason) {
             Reason.SAME_NAME_AUTHOR -> R.string.book_duplicate_reason_same_name_author
             Reason.SAME_NAME -> R.string.book_duplicate_reason_same_name

@@ -52,6 +52,7 @@ class BookDuplicateActivity :
                 }
             }
         }
+        viewModel.mergingLiveData.observe(this) { adapter.merging = it }
         viewModel.groupsLiveData.observe(this) { groups ->
             adapter.setItems(groups)
             upEmptyView()
@@ -78,26 +79,42 @@ class BookDuplicateActivity :
 
     override fun ignore(group: DuplicateGroup) {
         viewModel.ignore(group)
-        removeGroup(group)
     }
 
     override fun merge(group: DuplicateGroup, keep: Book) {
-        alert(
-            getString(R.string.book_duplicate_merge),
-            getString(R.string.book_duplicate_merge_confirm, keep.name, group.books.size - 1)
-        ) {
-            okButton {
-                viewModel.merge(group, keep) {
-                    removeGroup(group)
+        if (viewModel.mergingLiveData.value == true) return
+        val candidates = group.books.filter { it.bookUrl != keep.bookUrl }
+        val checked = BooleanArray(candidates.size)
+        val labels = candidates.map { book ->
+            val reasons = group.matches[setOf(keep.bookUrl, book.bookUrl)].orEmpty()
+            val evidence = if (reasons.isEmpty()) {
+                getString(R.string.book_duplicate_indirect)
+            } else {
+                reasons.sortedBy { it.ordinal }.joinToString(" · ") {
+                    getString(adapter.reasonRes(it))
                 }
+            }
+            "${book.name} · ${book.author} (${book.originName})\n$evidence"
+        }.toTypedArray()
+        alert(getString(R.string.book_duplicate_select, keep.name)) {
+            multiChoiceItems(labels, checked) { _, index, selected -> checked[index] = selected }
+            okButton {
+                val removes = candidates.filterIndexed { index, _ -> checked[index] }
+                if (removes.isNotEmpty()) confirmMerge(group, keep, removes)
             }
             cancelButton()
         }
     }
 
-    private fun removeGroup(group: DuplicateGroup) {
-        adapter.removeItem(group)
-        upEmptyView()
+    private fun confirmMerge(group: DuplicateGroup, keep: Book, removes: List<Book>) {
+        alert(
+            getString(R.string.book_duplicate_merge),
+            getString(R.string.book_duplicate_merge_confirm, keep.name, removes.size) +
+                "\n\n" + removes.joinToString("\n") { "${it.name} · ${it.author} (${it.originName})" }
+        ) {
+            okButton { viewModel.merge(group, keep, removes) }
+            cancelButton()
+        }
     }
 
     private fun upEmptyView() {

@@ -1352,7 +1352,10 @@
     <string name="book_duplicate_clear_ignore">清除已忽略</string>
     <string name="book_duplicate_keep">保留</string>
     <string name="book_duplicate_remove">删除</string>
-    <string name="book_duplicate_merge_confirm">保留《%1$s》，删除其余 %2$d 本？\n分组、阅读进度、书签和阅读时长会合并到保留的书，本地书籍源文件不会被删除。</string>
+    <string name="book_duplicate_candidate">待确认</string>
+    <string name="book_duplicate_select">保留《%1$s》，请选择要合并的书</string>
+    <string name="book_duplicate_indirect">仅与组内其他书有关联，与保留书无直接匹配，请谨慎选择</string>
+    <string name="book_duplicate_merge_confirm">保留《%1$s》，删除选中的 %2$d 本？\n分组、阅读进度、书签和阅读时长会合并到保留的书，本地书籍源文件不会被删除。</string>
     <string name="book_duplicate_reason_same_name_author">书名作者相同</string>
     <string name="book_duplicate_reason_same_name">书名相同，作者不同</string>
     <string name="book_duplicate_reason_similar_name">同作者，书名相近</string>

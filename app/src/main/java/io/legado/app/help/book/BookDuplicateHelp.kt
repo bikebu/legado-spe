@@ -1,5 +1,6 @@
 package io.legado.app.help.book
 
+import io.legado.app.constant.AppLog
 import io.legado.app.constant.AppPattern
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
@@ -34,7 +35,11 @@ object BookDuplicateHelp {
         SIMILAR_CONTENT
     }
 
-    class DuplicateGroup(val books: List<Book>, val reasons: Set<Reason>) {
+    class DuplicateGroup(
+        val books: List<Book>,
+        val reasons: Set<Reason>,
+        val matches: Map<Set<String>, Set<Reason>> = emptyMap()
+    ) {
         val key: String = groupKey(books)
     }
 
@@ -153,7 +158,11 @@ object BookDuplicateHelp {
                     if ((pair ushr 32).toInt() in indexSet) reasons.addAll(r)
                 }
                 val groupBooks = indices.map { shelfBooks[it] }.sortedWith(keepComparator)
-                DuplicateGroup(groupBooks, reasons).takeIf { it.key !in ignored }
+                val matches = pairReasons.filterKeys { (it ushr 32).toInt() in indexSet }
+                    .mapKeys { (pair, _) ->
+                        setOf(shelfBooks[(pair ushr 32).toInt()].bookUrl, shelfBooks[pair.toInt()].bookUrl)
+                    }
+                DuplicateGroup(groupBooks, reasons, matches).takeIf { it.key !in ignored }
             }
         return groups.sortedBy { group -> group.reasons.minOf { it.ordinal } }
     }
@@ -163,12 +172,22 @@ object BookDuplicateHelp {
      * 合并分组、阅读进度、书签、阅读时长、自定义信息
      */
     fun merge(keep: Book, removes: List<Book>) {
-        val removeList = removes.filter { it.bookUrl != keep.bookUrl }
-        if (removeList.isEmpty()) return
-        val removeUrls = removeList.map { it.bookUrl }.toHashSet()
-        val newKeep = appDb.bookDao.getBook(keep.bookUrl) ?: return
-        val keepToc = appDb.bookChapterDao.getChapterList(newKeep.bookUrl)
+        val removeList = arrayListOf<Book>()
         appDb.runInTransaction {
+            val newKeep = checkNotNull(appDb.bookDao.getBook(keep.bookUrl)) {
+                "保留的书籍已不在书架，请重新扫描"
+            }
+            check(!newKeep.isNotShelf) { "保留的书籍已不在书架，请重新扫描" }
+            removes.distinctBy { it.bookUrl }.filter { it.bookUrl != keep.bookUrl }
+                .forEach {
+                    val current = checkNotNull(appDb.bookDao.getBook(it.bookUrl)) {
+                        "待合并的书籍已发生变化，请重新扫描"
+                    }
+                    check(!current.isNotShelf) { "待合并的书籍已发生变化，请重新扫描" }
+                    removeList.add(current)
+                }
+            val removeUrls = removeList.map { it.bookUrl }.toHashSet()
+            val keepToc = appDb.bookChapterDao.getChapterList(newKeep.bookUrl)
             removeList.forEach { old ->
                 newKeep.group = newKeep.group or old.group
                 if (newKeep.customCoverUrl.isNullOrEmpty()) {
@@ -181,18 +200,23 @@ object BookDuplicateHelp {
                     newKeep.customTag = old.customTag
                 }
                 mergeProgress(newKeep, old, keepToc)
-                mergeBookmarks(newKeep, old, keepToc)
+                mergeBookmarks(newKeep, old, keepToc, removeUrls)
                 mergeReadRecord(newKeep, old, removeUrls)
             }
             appDb.bookDao.update(newKeep)
             removeList.forEach { it.delete() }
         }
         removeList.forEach {
-            if (it.isLocal) {
-                LocalBook.deleteBook(it, false)
-            } else {
-                val source = appDb.bookSourceDao.getBookSource(it.origin)
-                SourceCallBack.callBackBook(SourceCallBack.DEL_BOOK_SHELF, source, it)
+            runCatching {
+                if (it.isLocal) {
+                    LocalBook.deleteBook(it, false)
+                } else {
+                    val source = appDb.bookSourceDao.getBookSource(it.origin)
+                    SourceCallBack.callBackBook(SourceCallBack.DEL_BOOK_SHELF, source, it)
+                }
+            }.onFailure { error ->
+                // 数据库已提交，清理失败不能让界面把合并当作失败再次提交。
+                AppLog.put("合并后的书籍清理失败", error)
             }
         }
     }
@@ -229,11 +253,20 @@ object BookDuplicateHelp {
 
     private fun mergeProgress(keep: Book, old: Book, keepToc: List<BookChapter>) {
         keep.durChapterTime = max(keep.durChapterTime, old.durChapterTime)
-        if (keepToc.isEmpty() || old.durChapterIndex <= 0) return
+        if (keepToc.isEmpty()) return
         val index = BookHelp.getDurChapter(old, keepToc)
-        if (index <= keep.durChapterIndex) return
+        if (index < keep.durChapterIndex) return
+        // 不同来源的字符偏移不可直接比较，只有处理后的正文和标题一致才迁移位置。
+        val oldChapter = appDb.bookChapterDao.getChapterList(old.bookUrl)
+            .getOrNull(old.durChapterIndex)
+        val sameContent = oldChapter?.let { chapter ->
+            hasSameReadingContent(old, chapter, keep, keepToc[index])
+        } ?: false
+        val position = mergedChapterPosition(
+            keep.durChapterIndex, keep.durChapterPos, index, old.durChapterPos, sameContent
+        ) ?: return
         keep.durChapterIndex = index
-        keep.durChapterPos = old.durChapterPos
+        keep.durChapterPos = position
         keep.durChapterTitle = keepToc[index].getDisplayTitle(
             ContentProcessor.get(keep.name, keep.origin).getTitleReplaceRules(),
             keep.getUseReplaceRule(),
@@ -241,8 +274,43 @@ object BookDuplicateHelp {
         )
     }
 
-    private fun mergeBookmarks(keep: Book, old: Book, keepToc: List<BookChapter>) {
+    private fun hasSameReadingContent(
+        old: Book, oldChapter: BookChapter, keep: Book, keepChapter: BookChapter
+    ): Boolean = runCatching {
+        val oldRaw = BookHelp.getContent(old, oldChapter)
+        val keepRaw = BookHelp.getContent(keep, keepChapter)
+        if (oldRaw.isNullOrEmpty() || keepRaw.isNullOrEmpty()) return@runCatching false
+        val oldText = ContentProcessor.get(old).getContent(old, oldChapter, oldRaw).toString()
+        val keepText = ContentProcessor.get(keep).getContent(keep, keepChapter, keepRaw).toString()
+        oldText.isNotEmpty() && oldText == keepText
+    }.getOrDefault(false)
+
+    /** null 表示保留当前进度；跨版本正文无法确认一致时从目标章开头继续。 */
+    internal fun mergedChapterPosition(
+        currentIndex: Int,
+        currentPosition: Int,
+        mappedIndex: Int,
+        oldPosition: Int,
+        sameContent: Boolean
+    ): Int? {
+        if (mappedIndex < currentIndex) return null
+        val position = if (sameContent) oldPosition.coerceAtLeast(0) else 0
+        if (mappedIndex == currentIndex && position <= currentPosition) return null
+        return position
+    }
+
+    private fun mergeBookmarks(
+        keep: Book, old: Book, keepToc: List<BookChapter>, removeUrls: Set<String>
+    ) {
         if (keep.name == old.name && keep.author == old.author) return
+        val shared = appDb.bookDao.findByName(old.name).any {
+            it.author == old.author && it.bookUrl !in removeUrls
+        }
+        val existing = appDb.bookmarkDao.getByBook(keep.name, keep.author).toMutableList()
+        var nextTime = if (shared) {
+            max(System.currentTimeMillis(), appDb.bookmarkDao.all.maxOfOrNull { it.time } ?: 0L)
+        } else 0L
+        val oldToc = appDb.bookChapterDao.getChapterList(old.bookUrl)
         appDb.bookmarkDao.getByBook(old.name, old.author).forEach { bookmark ->
             val index = if (keepToc.isEmpty()) {
                 bookmark.chapterIndex
@@ -254,14 +322,31 @@ object BookDuplicateHelp {
                     old.totalChapterNum
                 )
             }
-            appDb.bookmarkDao.delete(bookmark)
-            appDb.bookmarkDao.insert(
-                bookmark.copy(
-                    bookName = keep.name,
-                    bookAuthor = keep.author,
-                    chapterIndex = index
-                )
+            val targetChapter = keepToc.getOrNull(index)
+            val sourceChapter = oldToc.getOrNull(bookmark.chapterIndex)
+            val sameContent = targetChapter != null && sourceChapter != null &&
+                hasSameReadingContent(old, sourceChapter, keep, targetChapter)
+            val migrated = bookmark.copy(
+                time = if (shared) ++nextTime else bookmark.time,
+                bookName = keep.name,
+                bookAuthor = keep.author,
+                chapterIndex = index,
+                chapterPos = if (sameContent) bookmark.chapterPos else 0,
+                chapterName = targetChapter?.getDisplayTitle(
+                    ContentProcessor.get(keep).getTitleReplaceRules(),
+                    keep.getUseReplaceRule(),
+                    replaceBook = keep.toReplaceBook()
+                ) ?: bookmark.chapterName
             )
+            if (!shared) appDb.bookmarkDao.delete(bookmark)
+            if (existing.none {
+                    it.chapterIndex == migrated.chapterIndex && it.chapterPos == migrated.chapterPos
+                        && it.chapterName == migrated.chapterName && it.bookText == migrated.bookText
+                        && it.content == migrated.content
+                }) {
+                appDb.bookmarkDao.insert(migrated)
+                existing.add(migrated)
+            }
         }
     }
 
