@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.view.View
 import androidx.core.view.postDelayed
 import androidx.fragment.app.activityViewModels
+import androidx.lifecycle.lifecycleScope
 import androidx.preference.ListPreference
 import androidx.preference.Preference
 import com.jeremyliao.liveeventbus.LiveEventBus
@@ -44,6 +45,9 @@ import io.legado.app.utils.sendToClip
 import io.legado.app.utils.showDialogFragment
 import io.legado.app.utils.toastOnUi
 import io.legado.app.web.mcp.McpServer
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import splitties.init.appCtx
 
 /**
@@ -255,7 +259,11 @@ class OtherConfigFragment : PreferenceFragment(),
     /**
      * MCP服务：开启、关闭、查看连接信息、重置令牌
      */
-    private fun showMcpDialog() {
+    private fun showMcpDialog(autoStartWeb: Boolean = true) {
+        if (LocalConfig.mcpEnabled && autoStartWeb && !isWebServiceReady()) {
+            startWebServiceThenShowMcpDialog()
+            return
+        }
         if (!LocalConfig.mcpEnabled) {
             alert(getString(R.string.mcp_service), getString(R.string.mcp_service_off_msg)) {
                 positiveButton(getString(R.string.mcp_enable)) {
@@ -272,16 +280,16 @@ class OtherConfigFragment : PreferenceFragment(),
         }
         val token = LocalConfig.mcpToken
             ?: McpServer.generateToken().also { LocalConfig.mcpToken = it }
-        val host = WebService.hostAddress
-        val address = if (WebService.isRun && host.startsWith("http")) {
-            host + McpServer.PATH
+        val webReady = isWebServiceReady()
+        val address = if (webReady) {
+            WebService.hostAddress + McpServer.PATH
         } else {
             "http://手机IP:${AppConfig.webPort}${McpServer.PATH}"
         }
         val command =
             "claude mcp add --transport http sigma-spe $address --header \"Authorization: Bearer $token\""
         var message = getString(R.string.mcp_service_on_msg, address, token, command)
-        if (!WebService.isRun) {
+        if (!webReady) {
             message += "\n\n" + getString(R.string.mcp_web_service_not_running)
         }
         alert(getString(R.string.mcp_service), message) {
@@ -297,6 +305,25 @@ class OtherConfigFragment : PreferenceFragment(),
                 LocalConfig.mcpEnabled = false
                 upMcpSummary()
             }
+        }
+    }
+
+    private fun isWebServiceReady(): Boolean {
+        return WebService.isRun && WebService.hostAddress.startsWith("http")
+    }
+
+    /**
+     * MCP依赖Web服务，未运行时自动启动，等拿到地址后再显示连接信息
+     */
+    private fun startWebServiceThenShowMcpDialog() {
+        WebService.start(requireContext())
+        viewLifecycleOwner.lifecycleScope.launch {
+            withTimeoutOrNull(5000) {
+                while (!isWebServiceReady()) {
+                    delay(100)
+                }
+            }
+            showMcpDialog(autoStartWeb = false)
         }
     }
 
